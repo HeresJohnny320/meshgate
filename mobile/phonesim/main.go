@@ -1,0 +1,152 @@
+//go:build linux
+
+// Command phonesim runs the mobile engine (meshcore) on Linux with a fake
+// platform layer, so the phone code path can be tested end to end without a
+// phone. It behaves like the iOS app: one TUN device whose settings are
+// updated in place.
+//
+//	phonesim -dir /tmp/phone -join mg1.... -name phone
+//	kill -USR1 <pid>   # simulate a Wi-Fi/LTE change
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
+
+	meshcore "github.com/heresjohnny320/meshgate/mobile/core"
+)
+
+const ifname = "mgphone"
+
+type platform struct {
+	fd     int32
+	routes []string
+}
+
+func (p *platform) Protect(fd int32) bool { return true }
+func (p *platform) Log(msg string)        { log.Print(msg) }
+
+func (p *platform) LocalAddresses() string {
+	var out []string
+	ifs, _ := net.Interfaces()
+	for _, i := range ifs {
+		if i.Name == ifname || i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, _ := i.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil {
+				out = append(out, n.IP.String())
+			}
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+func (p *platform) ConfigureTunnel(settings string) int32 {
+	var ts meshcore.TunnelSettings
+	if err := json.Unmarshal([]byte(settings), &ts); err != nil {
+		log.Print(err)
+		return -1
+	}
+	if p.fd < 0 {
+		fd, err := openTun(ifname)
+		if err != nil {
+			log.Printf("tun: %v", err)
+			return -1
+		}
+		p.fd = int32(fd)
+	}
+	ip := func(args ...string) {
+		if out, err := exec.Command("ip", args...).CombinedOutput(); err != nil {
+			log.Printf("ip %v: %v %s", args, err, out)
+		}
+	}
+	ip("link", "set", ifname, "mtu", strconv.Itoa(ts.MTU), "up")
+	ip("addr", "replace", fmt.Sprintf("%s/%d", ts.Address, ts.Prefix), "dev", ifname)
+	keep := map[string]bool{}
+	for _, r := range ts.Routes {
+		keep[r] = true
+		ip("route", "replace", r, "dev", ifname)
+	}
+	for _, r := range p.routes {
+		if !keep[r] {
+			ip("route", "del", r, "dev", ifname)
+		}
+	}
+	p.routes = ts.Routes
+	log.Printf("tunnel settings: %s", settings)
+	return p.fd
+}
+
+func openTun(name string) (int, error) {
+	fd, err := unix.Open("/dev/net/tun", unix.O_RDWR|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, err
+	}
+	var req [unix.IFNAMSIZ + 64]byte
+	copy(req[:], name)
+	*(*uint16)(unsafe.Pointer(&req[unix.IFNAMSIZ])) = unix.IFF_TUN | unix.IFF_NO_PI
+	if _, _, e := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), uintptr(unix.TUNSETIFF), uintptr(unsafe.Pointer(&req[0]))); e != 0 {
+		unix.Close(fd)
+		return -1, e
+	}
+	return fd, nil
+}
+
+func main() {
+	dir := flag.String("dir", "", "state directory")
+	tok := flag.String("join", "", "join token (first run)")
+	name := flag.String("name", "phone", "device name")
+	statusFile := flag.String("status", "", "write StatusJSON here every second")
+	flag.Parse()
+	log.SetFlags(log.Ltime)
+
+	p := &platform{fd: -1}
+	e, err := meshcore.NewEngine(*dir, p)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !e.IsJoined() {
+		if err := e.Join(*tok, *name); err != nil {
+			log.Fatalf("join: %v", err)
+		}
+		log.Print("joined")
+	}
+	if err := e.Start(); err != nil {
+		log.Fatalf("start: %v", err)
+	}
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
+	t := time.NewTicker(time.Second)
+	for {
+		select {
+		case s := <-sig:
+			if s == syscall.SIGUSR1 {
+				log.Print("network changed")
+				e.NetworkChanged()
+				continue
+			}
+			e.Stop()
+			return
+		case <-t.C:
+			if *statusFile != "" {
+				os.WriteFile(*statusFile+".tmp", []byte(e.StatusJSON()), 0o644)
+				os.Rename(*statusFile+".tmp", *statusFile)
+			}
+		}
+	}
+}

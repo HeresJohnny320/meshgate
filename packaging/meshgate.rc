@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# PROVIDE: meshgate
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+# meshgate for FreeBSD / pfSense. Installed as /usr/local/etc/rc.d/meshgate.sh;
+# pfSense starts *.sh scripts in that directory at boot.
+
+. /etc/rc.subr
+
+name=meshgate
+rcvar=meshgate_enable
+load_rc_config $name
+
+: ${meshgate_enable:="YES"}
+: ${meshgate_config:="/usr/local/etc/meshgate/node.json"}
+
+pidfile="/var/run/${name}.pid"
+command="/usr/sbin/daemon"
+command_args="-f -r -R 3 -P ${pidfile} -o /var/log/meshgate.log /usr/local/bin/meshgate -config ${meshgate_config} agent"
+
+run_rc_command "$1"

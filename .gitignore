@@ -1,0 +1,39 @@
+# Build output
+/dist/
+*.exe
+*.test
+*.out
+/meshgate
+/phonesim
+
+# Go
+/vendor/
+
+# Android
+/mobile/android/.gradle/
+/mobile/android/build/
+/mobile/android/app/build/
+/mobile/android/local.properties
+/mobile/android/.idea/
+/mobile/android/*.iml
+/mobile/android/app/libs/*.aar
+/mobile/android/app/libs/*.jar
+*.keystore
+*.jks
+
+# iOS
+/mobile/ios/Meshcore.xcframework/
+/mobile/ios/*.xcodeproj/
+/mobile/ios/build/
+xcuserdata/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local meshgate state when running from the source tree
+node.json
+state.json

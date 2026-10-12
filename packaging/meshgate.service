@@ -1,0 +1,14 @@
+[Unit]
+Description=meshgate mesh node
+Documentation=https://github.com/heresjohnny320/meshgate
+After=network-online.target nftables.service firewalld.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/meshgate agent
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

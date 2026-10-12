@@ -1,0 +1,56 @@
+# Generate the Xcode project with XcodeGen:  brew install xcodegen && xcodegen
+# Meshcore.xcframework is built by `make ios-core` (gomobile bind).
+name: MeshGate
+options:
+  bundleIdPrefix: dev.meshgate
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: "" # set your Apple team ID
+    SWIFT_VERSION: "5.9"
+targets:
+  MeshGate:
+    type: application
+    platform: iOS
+    sources: [MeshGate, Shared]
+    dependencies:
+      - target: MeshGateTunnel
+      - framework: Meshcore.xcframework
+    entitlements:
+      path: MeshGate/MeshGate.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [group.dev.meshgate]
+    info:
+      path: MeshGate/Info.plist
+      properties:
+        CFBundleDisplayName: meshgate
+        UILaunchScreen: {}
+        NSCameraUsageDescription: Scan the QR code of a meshgate join token.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.meshgate.app
+  MeshGateTunnel:
+    type: app-extension
+    platform: iOS
+    sources: [MeshGateTunnel, Shared]
+    dependencies:
+      - framework: Meshcore.xcframework
+        embed: false
+    entitlements:
+      path: MeshGateTunnel/MeshGateTunnel.entitlements
+      properties:
+        com.apple.developer.networking.networkextension: [packet-tunnel-provider]
+        com.apple.security.application-groups: [group.dev.meshgate]
+    info:
+      path: MeshGateTunnel/Info.plist
+      properties:
+        CFBundleDisplayName: meshgate tunnel
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.meshgate.app.tunnel
+        SWIFT_OBJC_BRIDGING_HEADER: MeshGateTunnel/Bridging.h

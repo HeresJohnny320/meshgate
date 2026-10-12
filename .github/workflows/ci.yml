@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y nftables
+      - name: vet (every target OS)
+        run: |
+          go vet ./...
+          CGO_ENABLED=0 GOOS=freebsd go vet ./cmd/... ./internal/...
+          CGO_ENABLED=0 GOOS=windows go vet ./cmd/... ./internal/...
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build ./mobile/core
+      - name: unit tests
+        run: go test ./...
+
+  lab:
+    # Full end-to-end test: real WireGuard + nftables in network namespaces.
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y nftables netcat-openbsd curl python3
+      - run: |
+          make build
+          go build -o dist/phonesim ./mobile/phonesim
+      # Ubuntu runners restrict unprivileged user namespaces, so run as root.
+      - run: sudo unshare -n -m sh test/e2e/lab.sh "$PWD/dist/meshgate" "$PWD/dist/phonesim"

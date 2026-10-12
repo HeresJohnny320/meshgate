@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>meshgate</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form" class="card">
+      <h1>meshgate</h1>
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+      <p class="error" id="login-error"></p>
+    </form>
+  </div>
+
+  <div id="app" class="hidden">
+    <header>
+      <span class="brand">meshgate</span>
+      <nav id="tabs">
+        <button data-tab="overview" class="active">Nodes</button>
+        <button data-tab="forwards">Port forwards</button>
+        <button data-tab="routes">HTTPS</button>
+        <button data-tab="acls">Access rules</button>
+        <button data-tab="devices">Add devices</button>
+        <button data-tab="settings">Settings</button>
+      </nav>
+      <button id="logout" class="ghost">Sign out</button>
+    </header>
+    <main>
+      <div id="warnings"></div>
+
+      <section id="tab-overview">
+        <p class="hint" id="viewpoint"></p>
+        <div class="table-wrap"><table id="nodes"></table></div>
+      </section>
+
+      <section id="tab-forwards" class="hidden">
+        <div class="row-head"><h2>Port forwards</h2><button id="fwd-new">New forward</button></div>
+        <p class="hint">Players connect to the edge (VPS) address; traffic is carried through the mesh to the target. Replaces hand-written iptables DNAT.</p>
+        <div class="table-wrap"><table id="forwards"></table></div>
+      </section>
+
+      <section id="tab-routes" class="hidden">
+        <div class="row-head"><h2>HTTPS routes</h2><button id="route-new">New route</button></div>
+        <p class="hint">Point the hostname's DNS A record at the edge node's public IP. Certificates come from Let's Encrypt automatically.</p>
+        <div class="table-wrap"><table id="routes"></table></div>
+      </section>
+
+      <section id="tab-acls" class="hidden">
+        <div class="row-head"><h2>Access rules</h2><button id="acl-new">New rule</button></div>
+        <p class="hint">Rules apply on nodes whose LAN policy is <b>restricted</b> (edit the node on the Nodes tab).
+          There, mesh devices can only reach the IPs, VLANs and ports listed here. Port forwards and HTTPS routes
+          are always allowed. On pfSense the rules are loaded as pf anchors.</p>
+        <div class="table-wrap"><table id="acls"></table></div>
+      </section>
+
+      <section id="tab-devices" class="hidden">
+        <div class="grid2">
+          <form id="token-form" class="card">
+            <h2>Join token</h2>
+            <p class="hint">Phones and laptops: scan the QR code with the meshgate app. Servers (Linux or pfSense): you get a one-line install command.</p>
+            <label>Device type
+              <select name="kind"><option value="client">Phone / laptop (client)</option><option value="server">Server (VPS / home box / pfSense)</option></select>
+            </label>
+            <label>Uses <input name="uses" type="number" value="1" min="-1"></label>
+            <label>Valid for (hours, 0 = forever) <input name="ttl_hours" type="number" value="24" min="0"></label>
+            <label>Note <input name="note" placeholder="e.g. Alex's phone"></label>
+            <button type="submit">Create token</button>
+            <div id="token-out"></div>
+          </form>
+          <form id="static-form" class="card">
+            <h2>Official WireGuard app</h2>
+            <p class="hint">For devices without meshgate. The device always connects through the relay you pick (no automatic switching).</p>
+            <label>Name <input name="name" required></label>
+            <label>Relay <select name="relay" id="static-relay"></select></label>
+            <button type="submit">Create config</button>
+            <div id="static-out"></div>
+          </form>
+        </div>
+        <h2>Tokens</h2>
+        <div class="table-wrap"><table id="tokens"></table></div>
+      </section>
+
+      <section id="tab-settings" class="hidden">
+        <div class="grid2">
+          <form id="network-form" class="card">
+            <h2>Network</h2>
+            <label>Let's Encrypt email (needed for HTTPS routes) <input name="acme_email" type="email"></label>
+            <button type="submit">Save</button>
+          </form>
+          <form id="admin-form" class="card">
+            <h2>Admin login</h2>
+            <label>Username <input name="username" required></label>
+            <label>New password <input name="password" type="password" minlength="8" required></label>
+            <button type="submit">Save</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dialog"><form method="dialog" id="dialog-form" class="card"></form></dialog>
+  <div id="toast" class="toast hidden"></div>
+</body>
+</html>
