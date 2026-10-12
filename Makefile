@@ -37,6 +37,7 @@ release:
 
 # Mobile cores (need gomobile: go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init)
 android-core:
+	mkdir -p mobile/android/app/libs
 	gomobile bind -target=android -androidapi 26 -javapkg=dev.meshgate -ldflags '$(LDFLAGS)' -o mobile/android/app/libs/meshcore.aar ./mobile/core
 
 ios-core:
