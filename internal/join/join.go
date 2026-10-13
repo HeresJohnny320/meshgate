@@ -128,8 +128,18 @@ func register(s *store.Store, req Request, now time.Time, consume func() error) 
 		return Response{}, errors.New("invalid public key")
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || len(req.Name) > 63 {
-		return Response{}, errors.New("name must be 1-63 characters")
+	if err := model.CheckName(req.Name); err != nil {
+		return Response{}, err
+	}
+	for _, ep := range req.Endpoints {
+		if err := model.CheckEndpoint(ep); err != nil {
+			return Response{}, err
+		}
+	}
+	switch req.LANPolicy {
+	case "", model.PolicyOpen, model.PolicyRestricted, model.PolicyFirewall:
+	default:
+		return Response{}, errors.New("bad lan policy")
 	}
 	netw, ok := store.Get[model.Network](s, model.Key(model.KindNetwork, "main"))
 	if !ok {
@@ -138,7 +148,13 @@ func register(s *store.Store, req Request, now time.Time, consume func() error) 
 	nodes := store.List[model.Node](s, model.KindNode)
 	for _, n := range nodes {
 		if n.PublicKey == req.PublicKey {
-			// Retried join: hand back the existing identity.
+			// Retried join: hand back the existing identity, but only to the
+			// kind the token admits. Public keys are visible to every device,
+			// so otherwise a phone token plus a server's key would fetch the
+			// server's full snapshot (admin password hash included).
+			if n.Kind != req.Kind {
+				return Response{}, fmt.Errorf("this key is already registered as a %s node", n.Kind)
+			}
 			return snapshot(s, n, netw), nil
 		}
 	}

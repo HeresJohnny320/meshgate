@@ -119,6 +119,12 @@ func RenderNFT(p Plan) string {
 		}
 		b.WriteString("\t}\n")
 	}
+	// Anti-spoofing: mesh addresses only ever arrive through the tunnel
+	// (where WireGuard vouches for them). Servers identify each other by
+	// mesh IP, so never accept one from any other interface.
+	if p.Mesh != "" {
+		block = append([]string{fmt.Sprintf("\t\tiifname != { %s, \"lo\" } ip saddr %s drop comment \"mesh address from outside\"", q(p.Iface), p.Mesh)}, block...)
+	}
 	if len(block) > 0 {
 		chain("blocked", "type filter hook prerouting priority raw", block)
 	}

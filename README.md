@@ -601,6 +601,21 @@ Environment variables:
 | `MESHGATE_PFSENSE_GUI=0` | pfSense: skip VPN → meshgate and the MESHGATE rules tab |
 | `MESHGATE_ZIP=…` (Windows) | install from a local `meshgate-windows-<arch>.zip` |
 
+### Security
+
+| Area | Protection |
+|---|---|
+| Joining | Tokens are random 192-bit secrets, stored only as SHA-256 hashes, single-use and expiring by default; the join API uses TLS pinned by the token. A token only admits its own kind of device (a phone token can never become or impersonate a server). |
+| Who can change config | Only server nodes. Phones and laptops can only publish their own status; servers identify each other by mesh IP, which WireGuard authenticates, and mesh addresses arriving on any other interface are dropped (anti-spoofing). |
+| Admin login | bcrypt password hash; 5 wrong tries lock an address out for 10 minutes. Browser sessions: `HttpOnly`, `SameSite=Strict` cookie, CSRF header, strict Content-Security-Policy, no framing. Phone app: a 12-hour token signed with a key derived from the password hash, kept in memory only; changing the password revokes all tokens. |
+| Exposure | The dashboard and management API listen on localhost and mesh IPs only (never the internet unless you pass `--web-public`). The test service is off unless you turn it on, and its UDP replies are never larger than the request (no amplification). |
+| Input | Device and item names reject control and invisible characters (no terminal or display tricks); endpoints, hostnames, subnets and ports are validated; everything shown in the dashboard is escaped. |
+| Install | The installers verify each download against the release's `SHA256SUMS`. Key and state files are readable by root only. |
+
+What's left to you: keep server tokens to yourself (a server can change
+everything), use a strong admin password, and keep meshgate updated. Found
+something? Please open an issue.
+
 ### Code layout
 
 - `internal/store`: replicated config (LWW registers, hybrid logical clock,

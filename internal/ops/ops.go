@@ -133,7 +133,11 @@ func (s *Service) PutForward(f model.Forward, scope store.Scope) (model.Forward,
 	if f.ID == "" {
 		f.ID = join.RandomID()
 	}
+	f.Name = strings.TrimSpace(f.Name)
 	if err := f.Validate(); err != nil {
+		return f, err
+	}
+	if err := model.CheckName(f.Name); err != nil {
 		return f, err
 	}
 	if !s.nodeExists(f.EdgeNode) || !s.nodeExists(f.TargetNode) {
@@ -192,6 +196,11 @@ func (s *Service) PutACL(a model.ACL, scope store.Scope) (model.ACL, error) {
 	}
 	a.Name = strings.TrimSpace(a.Name)
 	a.To = strings.TrimSpace(a.To)
+	if a.Name != "" {
+		if err := model.CheckName(a.Name); err != nil {
+			return a, err
+		}
+	}
 	if a.Name == "" {
 		a.Name = a.To
 	}
@@ -278,15 +287,15 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.Name != nil {
 		name := strings.TrimSpace(*p.Name)
-		if name == "" {
-			return n, errors.New("name required")
+		if err := model.CheckName(name); err != nil {
+			return n, err
 		}
 		n.Name = name
 	}
 	if p.Endpoints != nil {
 		for _, e := range *p.Endpoints {
-			if _, _, err := netSplit(e); err != nil {
-				return n, fmt.Errorf("endpoint %q: want host:port", e)
+			if err := model.CheckEndpoint(e); err != nil {
+				return n, err
 			}
 		}
 		n.Endpoints = *p.Endpoints

@@ -112,14 +112,22 @@ if [ -n "${MESHGATE_BIN:-}" ]; then
 else
   VER="${MESHGATE_VERSION:-latest}"
   if [ "$VER" = latest ]; then
-    URL="https://github.com/$REPO/releases/latest/download/meshgate-$GOOS-$ARCH"
+    BASE="https://github.com/$REPO/releases/latest/download"
   else
-    URL="https://github.com/$REPO/releases/download/$VER/meshgate-$GOOS-$ARCH"
+    BASE="https://github.com/$REPO/releases/download/$VER"
   fi
+  FILE="meshgate-$GOOS-$ARCH"
   TMP=$(mktemp)
-  fetch_url "$URL" "$TMP" || die "download failed: $URL"
+  SUMS=$(mktemp)
+  fetch_url "$BASE/$FILE" "$TMP" || die "download failed: $BASE/$FILE"
+  # Check the binary against the release's published checksums.
+  fetch_url "$BASE/SHA256SUMS" "$SUMS" || die "could not download SHA256SUMS for verification"
+  WANT=$(awk -v f="$FILE" '$2 == f || $2 == "*" f { print $1 }' "$SUMS")
+  if command -v sha256sum >/dev/null; then GOT=$(sha256sum "$TMP" | awk '{print $1}'); else GOT=$(sha256 -q "$TMP"); fi
+  [ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || { rm -f "$TMP" "$SUMS"; die "checksum mismatch for $FILE: refusing to install"; }
+  say "Checksum verified"
   install -m 0755 "$TMP" /usr/local/bin/meshgate
-  rm -f "$TMP"
+  rm -f "$TMP" "$SUMS"
 fi
 /usr/local/bin/meshgate version
 

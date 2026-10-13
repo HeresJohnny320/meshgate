@@ -36,8 +36,17 @@ Say "Installing meshgate ($arch) to $Dir"
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 $zip = $env:MESHGATE_ZIP
 if (-not $zip) {
-    $zip = Join-Path $env:TEMP "meshgate-windows-$arch.zip"
-    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$Repo/releases/latest/download/meshgate-windows-$arch.zip" -OutFile $zip
+    $name = "meshgate-windows-$arch.zip"
+    $zip = Join-Path $env:TEMP $name
+    $base = "https://github.com/$Repo/releases/latest/download"
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $zip
+    # Check the download against the release's published checksums.
+    $sums = (Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS").Content
+    if ($sums -is [byte[]]) { $sums = [Text.Encoding]::ASCII.GetString($sums) }
+    $want = ($sums -split "`n" | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($name))\s*$" } | ForEach-Object { $Matches[1] }) | Select-Object -First 1
+    $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+    if (-not $want -or $want -ne $got) { Remove-Item $zip -Force; throw "checksum mismatch for $name; refusing to install" }
+    Say "Checksum verified"
 }
 if (Get-Service meshgate -ErrorAction SilentlyContinue) { Stop-Service meshgate -ErrorAction SilentlyContinue }
 Expand-Archive -Force -Path $zip -DestinationPath $Dir

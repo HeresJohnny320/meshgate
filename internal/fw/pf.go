@@ -79,6 +79,9 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 	if len(p.ExitClients) > 0 && p.Restricted {
 		add(&f, "table <meshgate_private> const { %s }", strings.Join(PrivateNets, ", "))
 	}
+	// Anti-spoofing: mesh addresses only ever arrive through the tunnel.
+	add(&f, "pass in quick on lo0 inet from %s to any # local traffic", mesh)
+	add(&f, "block drop in quick on ! %s inet from %s to any # mesh address from outside", wg, mesh)
 	if p.WANIface != "" {
 		for _, a := range p.WANOpen {
 			add(&f, "pass in quick on %s inet proto %s from any to (%s) port { %s } keep state # %s",

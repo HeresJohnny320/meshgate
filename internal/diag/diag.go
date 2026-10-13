@@ -19,8 +19,14 @@ import (
 	"time"
 )
 
-// UDPProbe is what the UDP check sends; the test service answers it.
-const UDPProbe = "meshgate?"
+// UDPProbe is what the UDP check sends; the test service answers it. It is
+// padded to UDPMin bytes because the service never answers anything
+// shorter, nor with more bytes than it received: so it cannot be abused to
+// amplify spoofed traffic toward someone else.
+var UDPProbe = "meshgate?" + strings.Repeat(" ", UDPMin)
+
+// UDPMin is the smallest UDP request the test service answers.
+const UDPMin = 64
 
 // MyIPURL answers with the caller's public IP in plain text (the "myip"
 // check: which address do websites see, e.g. through an exit node).
@@ -57,8 +63,12 @@ func Serve(ctx context.Context, port int, node string) error {
 			if err != nil {
 				return
 			}
-			if n > 0 {
-				pc.WriteTo([]byte(fmt.Sprintf("meshgate test service on %s: you are %s\n", node, from)), from)
+			if n >= UDPMin {
+				reply := []byte(fmt.Sprintf("meshgate test service on %s: you are %s\n", node, from))
+				if len(reply) > n {
+					reply = reply[:n]
+				}
+				pc.WriteTo(reply, from)
 			}
 		}
 	}()

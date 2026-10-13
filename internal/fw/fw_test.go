@@ -76,8 +76,8 @@ func TestTargetOpen(t *testing.T) {
 			t.Errorf("missing %q in\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "dnat") || strings.Contains(s, "drop") {
-		t.Error("open target must not dnat or drop")
+	if strings.Contains(s, "dnat") || strings.Count(s, "drop") != 1 || !strings.Contains(s, `iifname != { "mg0", "lo" } ip saddr 100.88.0.0/16 drop`) {
+		t.Errorf("open target must not dnat or drop (except spoofed mesh sources):\n%s", s)
 	}
 	nftCheck(t, s)
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,5 +125,43 @@ func TestJoinAndClientSyncOverTLS(t *testing.T) {
 	}
 	if _, err := SyncClient(ctx, srvInfo, resp.Node.ID, "wrong", ClientSync{}, d.DialContext); err == nil {
 		t.Fatal("bad secret accepted")
+	}
+}
+
+// A phone token plus a server's (public) key must not return the server's
+// snapshot, which holds the admin password hash.
+func TestRetriedJoinCannotBorrowServerIdentity(t *testing.T) {
+	s := newMesh(t)
+	serverKey := pub()
+	s.Put(model.Key(model.KindNode, "srv"), model.Node{ID: "srv", Name: "vps", Kind: model.NodeServer, PublicKey: serverKey,
+		MeshIP: "100.88.0.1", JoinAddr: "x:1", JoinFP: "ab", Relay: true, Endpoints: []string{"1.1.1.1:51820"}}, store.Cluster)
+	str, _, _ := NewToken(s, model.NodeClient, 5, time.Hour, "", time.Now())
+	tok, _ := Decode(str)
+	resp, err := Admit(s, Request{TokenID: tok.ID, Secret: tok.Secret, Name: "evil", PublicKey: serverKey}, time.Now())
+	if err == nil {
+		t.Fatalf("phone token returned the server's identity: %+v", resp.Node)
+	}
+	for _, e := range resp.Entries {
+		if strings.HasPrefix(e.Key, model.KindAdmin) {
+			t.Fatal("admin hash leaked")
+		}
+	}
+}
+
+func TestJoinRejectsBadInput(t *testing.T) {
+	s := newMesh(t)
+	str, _, _ := NewToken(s, model.NodeServer, 10, time.Hour, "", time.Now())
+	tok, _ := Decode(str)
+	for _, req := range []Request{
+		{Name: "evil\x1b[2Jname"},
+		{Name: "rtl‮txt.exe"},
+		{Name: "ok", Endpoints: []string{"1.2.3.4:51820\nallowed_ip=0.0.0.0/0"}},
+		{Name: "ok2", Endpoints: []string{"1.2.3.4:99999"}},
+		{Name: "ok3", LANPolicy: "wide-open"},
+	} {
+		req.TokenID, req.Secret, req.PublicKey, req.Kind = tok.ID, tok.Secret, pub(), model.NodeServer
+		if _, err := Admit(s, req, time.Now()); err == nil {
+			t.Errorf("accepted %+v", req)
+		}
 	}
 }

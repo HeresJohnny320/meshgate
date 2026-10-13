@@ -68,3 +68,29 @@ func TestMyIP(t *testing.T) {
 		t.Errorf("myip: %+v", r)
 	}
 }
+
+func TestUDPNoAmplification(t *testing.T) {
+	port := freePort(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go Serve(ctx, port, "a-node-with-a-rather-long-name-to-make-the-reply-big")
+	time.Sleep(200 * time.Millisecond)
+	c, err := net.Dial("udp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	buf := make([]byte, 512)
+	c.Write([]byte("hi"))
+	c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	if n, err := c.Read(buf); err == nil {
+		t.Fatalf("answered a 2-byte request with %d bytes", n)
+	}
+	req := []byte(UDPProbe)
+	c.Write(req)
+	c.SetReadDeadline(time.Now().Add(time.Second))
+	n, err := c.Read(buf)
+	if err != nil || n > len(req) {
+		t.Fatalf("reply %d bytes to a %d-byte request (%v)", n, len(req), err)
+	}
+}

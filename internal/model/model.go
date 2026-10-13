@@ -7,9 +7,14 @@ package model
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Record kinds. The kind is the first segment of a store key.
@@ -214,8 +219,8 @@ type HTTPRoute struct {
 
 // Validate checks an HTTP route.
 func (r HTTPRoute) Validate() error {
-	h := strings.TrimSpace(r.Hostname)
-	if h == "" || strings.ContainsAny(h, " /:") || !strings.Contains(h, ".") {
+	h := strings.ToLower(strings.TrimSpace(r.Hostname))
+	if len(h) > 253 || !hostnameRE.MatchString(h) {
 		return fmt.Errorf("hostname must be a DNS name like app.example.com")
 	}
 	if r.EdgeNode == "" || r.TargetNode == "" {
@@ -378,4 +383,39 @@ func atoi(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+var hostnameRE = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// CheckName validates a display name (nodes, forwards, routes, rules):
+// 1-63 characters, no control or invisible formatting characters, which
+// could rewrite terminal output in the TUI or disguise the name.
+func CheckName(name string) error {
+	if name == "" || len(name) > 63 {
+		return fmt.Errorf("name must be 1-63 characters")
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == utf8.RuneError {
+			return fmt.Errorf("name contains a control or invisible character")
+		}
+	}
+	return nil
+}
+
+// CheckEndpoint validates "host:port" (IPv4 address or DNS name).
+func CheckEndpoint(ep string) error {
+	host, port, err := net.SplitHostPort(ep)
+	if err != nil {
+		return fmt.Errorf("endpoint %q: want host:port", ep)
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil || !validPort(p) {
+		return fmt.Errorf("endpoint %q: bad port", ep)
+	}
+	if host == "" || len(host) > 253 || strings.ContainsFunc(host, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == ':')
+	}) {
+		return fmt.Errorf("endpoint %q: bad host", ep)
+	}
+	return nil
 }
