@@ -1,7 +1,13 @@
 name: release
 
-# Push a tag like v0.2.0 to build everything and publish a GitHub release.
+# Every push to main that passes ci is released automatically with the next
+# patch version (v0.2.0 -> v0.2.1). Push a tag yourself (e.g. v0.3.0) for a
+# bigger step; automatic releases continue from the newest tag.
 on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
   push:
     tags: ["v*"]
   workflow_dispatch:
@@ -9,19 +15,57 @@ on:
 permissions:
   contents: write
 
+# One release at a time, so two quick pushes never pick the same version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  version:
+    # Only pushes whose ci passed (not pull requests, not failed runs).
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      sha: ${{ steps.v.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - id: v
+        run: |
+          sha=$(git rev-parse HEAD)
+          if [ "${{ github.event_name }}" = push ]; then
+            tag=$GITHUB_REF_NAME            # a tag you pushed yourself
+          elif [ -n "$(git tag --points-at HEAD --list 'v*')" ]; then
+            echo "commit already tagged; its tag push makes the release"
+            tag=""
+          else
+            last=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -1)
+            v=${last:-v0.0.0}; v=${v#v}
+            major=${v%%.*}; rest=${v#*.}; minor=${rest%%.*}; patch=${rest#*.}
+            tag="v$major.$minor.$((patch + 1))"
+          fi
+          echo "release: ${tag:-none} ($sha)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   binaries:
+    needs: version
+    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.version.outputs.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: go test ./...
       - name: build Linux, FreeBSD/pfSense and Windows
-        run: make release VERSION=${GITHUB_REF_NAME}
+        run: make release VERSION=${{ needs.version.outputs.tag }}
       - uses: actions/upload-artifact@v4
         with:
           name: binaries
@@ -31,11 +75,14 @@ jobs:
             dist/meshgate-windows-*.zip
 
   android:
+    needs: version
+    if: needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ needs.version.outputs.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -48,7 +95,7 @@ jobs:
           go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
           gomobile init
-          make android-core VERSION=${GITHUB_REF_NAME}
+          make android-core VERSION=${{ needs.version.outputs.tag }}
       - name: release signing key (optional)
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -63,9 +110,9 @@ jobs:
           MESHGATE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           MESHGATE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           MESHGATE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          ./gradlew --no-daemon assembleRelease -PversionName="$VERSION" -PversionCode="${GITHUB_RUN_NUMBER}"
+          ./gradlew --no-daemon assembleRelease -PversionName="${TAG#v}" -PversionCode="${GITHUB_RUN_NUMBER}"
           cp app/build/outputs/apk/release/app-release.apk "$GITHUB_WORKSPACE/meshgate-android.apk"
       - uses: actions/upload-artifact@v4
         with:
@@ -73,19 +120,24 @@ jobs:
           path: meshgate-android.apk
 
   publish:
-    needs: [binaries, android]
+    needs: [version, binaries, android]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
       - name: checksums
         run: cd out && sha256sum * > SHA256SUMS
+      # Creates the tag on that commit if it does not exist yet. (Tags made
+      # with the workflow token do not trigger this workflow again.)
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ needs.version.outputs.sha }}
           generate_release_notes: true
           files: |
             out/*

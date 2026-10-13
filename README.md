@@ -267,10 +267,12 @@ make release  # linux amd64/arm64/arm, freebsd amd64/arm64, windows zips in dist
 
 - `.github/workflows/ci.yml` runs on every push: it vets for every OS, then
   runs the unit tests and the Linux lab.
-- `.github/workflows/release.yml` runs when you push a tag:
+- `.github/workflows/release.yml` releases every push to `main` whose `ci`
+  run passed, bumping the patch version (v0.2.0 → v0.2.1). For a bigger step,
+  push a tag yourself; automatic releases continue from it:
 
   ```sh
-  git tag v0.1.0 && git push origin v0.1.0
+  git tag v0.3.0 && git push origin v0.3.0
   ```
 
   It builds the Linux, FreeBSD/pfSense and Windows binaries and the Android
