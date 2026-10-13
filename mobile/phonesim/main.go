@@ -29,15 +29,23 @@ import (
 	meshcore "github.com/heresjohnny320/meshgate/mobile/core"
 )
 
-const ifname = "mgphone"
+const (
+	ifname     = "mgphone"
+	table      = "51820" // tunnel routes, like Android's VPN routing
+	bypassMark = 0x4d46  // fw.MarkBypass
+)
 
 type platform struct {
 	fd     int32
 	routes []string
 }
 
-func (p *platform) Protect(fd int32) bool { return true }
-func (p *platform) Log(msg string)        { log.Print(msg) }
+// Protect marks the socket like Android's VpnService.protect: marked
+// traffic skips the tunnel's routing table.
+func (p *platform) Protect(fd int32) bool {
+	return unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_MARK, bypassMark) == nil
+}
+func (p *platform) Log(msg string) { log.Print(msg) }
 
 func (p *platform) LocalAddresses() string {
 	var out []string
@@ -77,15 +85,25 @@ func (p *platform) ConfigureTunnel(settings string) int32 {
 	}
 	ip("link", "set", ifname, "mtu", strconv.Itoa(ts.MTU), "up")
 	ip("addr", "replace", fmt.Sprintf("%s/%d", ts.Address, ts.Prefix), "dev", ifname)
+	// Tunnel routes live in their own table, used by every unmarked packet
+	// unless the main table has a more specific route (wg-quick style), so
+	// an exit node's 0.0.0.0/0 does not swallow the phone's own uplink.
+	if p.routes == nil {
+		ip("rule", "add", "prio", "99", "lookup", "main", "suppress_prefixlength", "0")
+		ip("rule", "add", "prio", "100", "not", "fwmark", strconv.Itoa(bypassMark), "lookup", table)
+	}
 	keep := map[string]bool{}
 	for _, r := range ts.Routes {
 		keep[r] = true
-		ip("route", "replace", r, "dev", ifname)
+		ip("route", "replace", r, "dev", ifname, "table", table)
 	}
 	for _, r := range p.routes {
 		if !keep[r] {
-			ip("route", "del", r, "dev", ifname)
+			ip("route", "del", r, "dev", ifname, "table", table)
 		}
+	}
+	if len(ts.DNS) > 0 {
+		log.Printf("dns: %v", ts.DNS)
 	}
 	p.routes = ts.Routes
 	log.Printf("tunnel settings: %s", settings)

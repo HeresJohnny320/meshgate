@@ -52,6 +52,9 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 			add(&n, "nat on %s inet proto %s from ! %s to %s port %s -> (%s:0) # %s", wg, proto, mesh, d.Dst, port, wg, pfComment(d.Name))
 		}
 	}
+	if len(p.ExitClients) > 0 && p.WANIface != "" {
+		add(&n, "nat on %s inet from { %s } to any -> (%s:0) # exit node", p.WANIface, strings.Join(p.ExitClients, ", "), p.WANIface)
+	}
 	for _, l := range p.LANs {
 		if l.Iface == "" {
 			continue
@@ -73,6 +76,9 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 	}
 
 	// Filter rules.
+	if len(p.ExitClients) > 0 && p.Restricted {
+		add(&f, "table <meshgate_private> const { %s }", strings.Join(PrivateNets, ", "))
+	}
 	if p.WANIface != "" {
 		for _, a := range p.WANOpen {
 			add(&f, "pass in quick on %s inet proto %s from any to (%s) port { %s } keep state # %s",
@@ -113,6 +119,9 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 		}
 	}
 	add(&f, "block in quick on %s inet from any to self # this node: only what rules allow", wg)
+	if len(p.ExitClients) > 0 {
+		add(&f, "pass in quick on %s inet from { %s } to ! <meshgate_private> keep state # exit node: internet only", wg, strings.Join(p.ExitClients, ", "))
+	}
 	add(&f, "pass in quick on %s inet from %s to %s keep state # relay between mesh nodes", wg, mesh, mesh)
 	for _, a := range p.Allow {
 		if !a.Self {

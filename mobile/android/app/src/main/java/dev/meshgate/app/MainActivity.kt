@@ -13,6 +13,26 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -67,7 +87,14 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 0)
         }
         setContent {
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+            val dark = isSystemInDarkTheme()
+            val colors = when {
+                Build.VERSION.SDK_INT >= 31 && dark -> dynamicDarkColorScheme(this)
+                Build.VERSION.SDK_INT >= 31 -> dynamicLightColorScheme(this)
+                dark -> darkColorScheme()
+                else -> lightColorScheme()
+            }
+            MaterialTheme(colorScheme = colors) {
                 Scaffold { pad ->
                     Column(Modifier.padding(pad).fillMaxSize()) { App() }
                 }
@@ -81,6 +108,7 @@ data class AdminLink(val name: String, val url: String)
 data class Status(
     val joined: Boolean, val running: Boolean, val name: String, val meshIp: String,
     val relay: String, val error: String, val peers: List<Peer>, val admin: List<AdminLink>,
+    val home: Boolean, val exit: String, val exitWanted: String, val warnings: List<String>,
 )
 
 fun parseStatus(json: String): Status {
@@ -95,9 +123,12 @@ fun parseStatus(json: String): Status {
         val a = adminArr!!.getJSONObject(it)
         AdminLink(a.optString("name"), a.optString("url"))
     }
+    val warnArr = o.optJSONArray("warnings")
+    val warnings = (0 until (warnArr?.length() ?: 0)).map { warnArr!!.getString(it) }
     return Status(
         o.optBoolean("joined"), o.optBoolean("running"), o.optString("name"), o.optString("mesh_ip"),
         o.optString("home_relay"), o.optString("error"), list, admin,
+        o.optBoolean("home"), o.optString("exit"), o.optString("exit_wanted"), warnings,
     )
 }
 
@@ -178,84 +209,136 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: (String) -> Unit, onChange: () 
     }
     var confirmLeave by remember { mutableStateOf(false) }
 
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.weight(1f)) {
-            Text(s.name, style = MaterialTheme.typography.headlineSmall)
-            Text(s.meshIp, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
-        }
-        Switch(checked = s.running, onCheckedChange = { on ->
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth().weight(1f)) {
+        item { ConnectionCard(s) { on ->
             if (on) {
                 val intent = VpnService.prepare(activity)
                 if (intent != null) consent.launch(intent) else startVpn()
             } else {
                 activity.startService(Intent(activity, MeshVpnService::class.java).setAction(MeshVpnService.ACTION_STOP))
             }
-        })
-    }
-    Spacer(Modifier.height(4.dp))
-    Text(
-        when {
-            !s.running -> "Disconnected"
-            s.relay.isNotEmpty() -> "Connected · relay ${s.relay}"
-            else -> "Connected"
-        },
-        color = if (s.running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    if (s.error.isNotEmpty()) Text(s.error, color = MaterialTheme.colorScheme.error)
-    // Full mesh management from the phone: the web UI through the tunnel,
-    // behind its admin login. Always shown, so it says what is missing.
-    Spacer(Modifier.height(12.dp))
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            Text("Admin", fontWeight = FontWeight.SemiBold)
-            Text(
-                when {
-                    s.admin.isEmpty() -> "No node in this mesh hosts the web UI yet. On pfSense run `meshgate pfsense install`, " +
-                        "or on a server `meshgate webui enable`."
-                    !s.running -> "Turn the tunnel on to manage the mesh."
-                    else -> "Sign in with the web UI admin login to manage devices, forwards and rules."
-                },
-                style = MaterialTheme.typography.bodySmall,
-            )
-            s.admin.forEach { link ->
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = { onAdmin(link.url) }, enabled = s.running, modifier = Modifier.fillMaxWidth()) {
-                    Text("Open admin · ${link.name}")
+        } }
+        // Full mesh management from the phone: the web UI through the tunnel,
+        // behind its admin login. Always shown, so it says what is missing.
+        item {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Admin", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        when {
+                            s.admin.isEmpty() -> "No node in this mesh hosts the web UI yet. On pfSense run `meshgate pfsense install`, " +
+                                "or on a server `meshgate webui enable`."
+                            !s.running -> "Turn the tunnel on to manage the mesh."
+                            else -> "Devices, port forwards, exit nodes and rules. Sign in with the admin login."
+                        },
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    s.admin.forEach { link ->
+                        Spacer(Modifier.height(12.dp))
+                        FilledTonalButton(onClick = { onAdmin(link.url) }, enabled = s.running, modifier = Modifier.fillMaxWidth()) {
+                            Text("Open admin · ${link.name}")
+                        }
+                    }
                 }
             }
         }
-    }
-    Spacer(Modifier.height(16.dp))
-
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-        items(s.peers) { p ->
-            Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(p.name, fontWeight = FontWeight.SemiBold)
-                        Text("${p.kind} · ${p.meshIp}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                    }
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(p.path.ifEmpty { "–" }, style = MaterialTheme.typography.bodyMedium)
-                        Text(handshakeText(p.handshake), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+        item {
+            Text("Devices", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp, start = 4.dp))
+        }
+        items(s.peers) { p -> PeerRow(p) }
+        item {
+            TextButton(onClick = { confirmLeave = true }, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                Text("Leave mesh", color = MaterialTheme.colorScheme.error)
             }
         }
     }
     if (confirmLeave) {
-        Row {
-            Text("Remove this phone from the mesh?", Modifier.weight(1f).align(Alignment.CenterVertically))
-            TextButton(onClick = { confirmLeave = false }) { Text("Cancel") }
-            TextButton(onClick = {
-                activity.startService(Intent(activity, MeshVpnService::class.java).setAction(MeshVpnService.ACTION_STOP))
-                Mesh.engine.leave()
-                confirmLeave = false
-                onChange()
-            }) { Text("Leave") }
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            title = { Text("Leave the mesh?") },
+            text = { Text("This phone is removed from the mesh. To come back you need a new join token.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    activity.startService(Intent(activity, MeshVpnService::class.java).setAction(MeshVpnService.ACTION_STOP))
+                    Mesh.engine.leave()
+                    confirmLeave = false
+                    onChange()
+                }) { Text("Leave", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** The big switch plus where traffic goes right now. */
+@Composable
+fun ConnectionCard(s: Status, onToggle: (Boolean) -> Unit) {
+    val on = s.running
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (on) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(s.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    Text(s.meshIp, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium)
+                }
+                Switch(checked = on, onCheckedChange = onToggle)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                when {
+                    !on -> "Disconnected"
+                    s.home -> "At home · direct to your network"
+                    s.relay.isNotEmpty() -> "Away · connected via ${s.relay}"
+                    else -> "Connected"
+                },
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (on) {
+                Text(
+                    when {
+                        s.exit.isNotEmpty() -> "Internet: through ${s.exit}"
+                        s.exitWanted.isNotEmpty() && s.home -> "Internet: your own connection (through ${s.exitWanted} when away)"
+                        else -> "Internet: your own connection"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            (listOf(s.error) + s.warnings).filter { it.isNotEmpty() }.forEach {
+                Spacer(Modifier.height(6.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
         }
-    } else {
-        OutlinedButton(onClick = { confirmLeave = true }, modifier = Modifier.fillMaxWidth()) { Text("Leave mesh") }
+    }
+}
+
+@Composable
+fun PeerRow(p: Peer) {
+    val age = if (p.handshake > 0) System.currentTimeMillis() / 1000 - p.handshake else Long.MAX_VALUE
+    val dot = when {
+        age < 180 && p.path == "direct" -> Color(0xFF2E9E5B)
+        age < 180 -> Color(0xFFD08A1E)
+        else -> MaterialTheme.colorScheme.outline
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(p.name, fontWeight = FontWeight.SemiBold)
+                Text("${p.kind} · ${p.meshIp}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(p.path.ifEmpty { "–" }, style = MaterialTheme.typography.bodyMedium)
+                Text(handshakeText(p.handshake), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 
@@ -270,6 +353,7 @@ fun handshakeText(unix: Long): String {
 }
 
 /** The mesh web UI inside the app. Requires the web UI's admin login. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
     var web by remember { mutableStateOf<WebView?>(null) }
@@ -277,15 +361,21 @@ fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
         val w = web
         if (w != null && w.canGoBack()) w.goBack() else onClose()
     }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-        TextButton(onClick = onClose) { Text("‹ Back") }
-        Text(
-            android.net.Uri.parse(url).host ?: url,
-            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-        )
-        TextButton(onClick = { web?.reload() }) { Text("Reload") }
-    }
+    TopAppBar(
+        title = {
+            Column {
+                Text("Admin", style = MaterialTheme.typography.titleMedium)
+                Text(android.net.Uri.parse(url).host ?: url, style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        },
+        navigationIcon = {
+            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+        },
+        actions = {
+            IconButton(onClick = { web?.reload() }) { Icon(Icons.Filled.Refresh, contentDescription = "Reload") }
+        },
+    )
     AndroidView(
         modifier = Modifier.fillMaxWidth().weight(1f),
         factory = { ctx ->

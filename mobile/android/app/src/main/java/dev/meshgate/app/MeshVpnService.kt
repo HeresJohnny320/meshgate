@@ -84,6 +84,9 @@ class MeshVpnService : VpnService() {
             val (ip, bits) = routes.getString(i).split("/")
             builder.addRoute(ip, bits.toInt())
         }
+        // With an exit node all traffic is tunnelled; send DNS through it too.
+        val dns = s.optJSONArray("dns")
+        for (i in 0 until (dns?.length() ?: 0)) builder.addDnsServer(dns!!.getString(i))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(false)
         val pfd = builder.establish() ?: return -1
         // The Go side owns the descriptor from here on.

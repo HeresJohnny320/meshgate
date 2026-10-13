@@ -88,3 +88,67 @@ func TestPreserveClientIPGivesEdgeDefault(t *testing.T) {
 		t.Fatal("expected policy default via vps")
 	}
 }
+
+func TestCafeWithHomeRangeKeepsSubnetInTunnel(t *testing.T) {
+	// The café also uses 192.168.1.0/24, but home answers only via the relay.
+	c, _ := Build(Input{Network: network, Self: phone, Nodes: nodes,
+		LocalAddrs: []netip.Addr{netip.MustParseAddr("192.168.1.77")},
+		Paths: pathsel.Result{Paths: map[string]pathsel.Path{
+			"home": {Via: "vps"}, "vps": {Endpoint: "1.1.1.1:51820"}}}})
+	if c.Home {
+		t.Fatal("café LAN taken for home")
+	}
+	if got := ips(peer(t, c, "vps")); got != "100.88.0.1/32,100.88.0.2/32,192.168.1.0/24" {
+		t.Fatalf("vps allowed = %s", got)
+	}
+	if len(c.Routes) != 1 || c.Routes[0].String() != "192.168.1.0/24" {
+		t.Fatalf("routes %v", c.Routes)
+	}
+}
+
+func exitInput(local string, homePath pathsel.Path) Input {
+	p := phone
+	p.ExitVia = "vps"
+	v := vps
+	v.Exit = true
+	in := Input{Network: network, Self: p, Nodes: []model.Node{p, home, v}, ExitCapable: true,
+		Paths: pathsel.Result{Paths: map[string]pathsel.Path{"home": homePath, "vps": {Endpoint: "1.1.1.1:51820"}}}}
+	if local != "" {
+		in.LocalAddrs = []netip.Addr{netip.MustParseAddr(local)}
+	}
+	return in
+}
+
+func TestExitNodeAway(t *testing.T) {
+	c, _ := Build(exitInput("10.20.0.5", pathsel.Path{Via: "vps"}))
+	if c.ExitVia != "vps" || c.Home {
+		t.Fatalf("exit=%q home=%v", c.ExitVia, c.Home)
+	}
+	if got := ips(peer(t, c, "vps")); got != "0.0.0.0/0,100.88.0.1/32,100.88.0.2/32,192.168.1.0/24" {
+		t.Fatalf("vps allowed = %s", got)
+	}
+	if got := c.Routes[0].String(); got != "0.0.0.0/0" {
+		t.Fatalf("routes %v", c.Routes)
+	}
+}
+
+func TestExitNodeNotUsedAtHome(t *testing.T) {
+	c, _ := Build(exitInput("192.168.1.77", pathsel.Path{Endpoint: "192.168.1.10:51820"}))
+	if !c.Home || c.ExitVia != "" {
+		t.Fatalf("home=%v exit=%q", c.Home, c.ExitVia)
+	}
+	for _, r := range c.Routes {
+		if r.Bits() == 0 {
+			t.Fatalf("default route at home: %v", c.Routes)
+		}
+	}
+}
+
+func TestExitNodeNeedsCapablePlatform(t *testing.T) {
+	in := exitInput("10.20.0.5", pathsel.Path{Via: "vps"})
+	in.ExitCapable = false
+	c, _ := Build(in)
+	if c.ExitVia != "" || strings.Contains(ips(peer(t, c, "vps")), "0.0.0.0/0") || len(c.Warnings) == 0 {
+		t.Fatalf("exit used on an incapable platform: %+v", c)
+	}
+}

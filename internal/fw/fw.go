@@ -56,6 +56,12 @@ func RenderNFT(p Plan) string {
 			q(p.Iface), q(p.Iface), strings.Join(cidrs, ", ")))
 	}
 
+	// Exit node: devices that picked us reach the internet from our address.
+	if len(p.ExitClients) > 0 {
+		post = append(post, fmt.Sprintf("\t\tiifname %s oifname != %s ip saddr { %s } masquerade comment %s",
+			q(p.Iface), q(p.Iface), strings.Join(p.ExitClients, ", "), q("exit node")))
+	}
+
 	// Target side of preserve-client-IP: remember connections that arrived
 	// over the mesh from outside the mesh range, and route replies back.
 	if p.PreserveEdgeIP != "" {
@@ -68,6 +74,10 @@ func RenderNFT(p Plan) string {
 		fwd = append(fwd,
 			fmt.Sprintf("\t\tiifname %s oifname %s accept comment %s", q(p.Iface), q(p.Iface), q("relay between mesh nodes")),
 			fmt.Sprintf("\t\tiifname %s ct state established,related accept", q(p.Iface)))
+		if len(p.ExitClients) > 0 {
+			fwd = append(fwd, fmt.Sprintf("\t\tiifname %s oifname != %s ip saddr { %s } ip daddr != { %s } accept comment %s",
+				q(p.Iface), q(p.Iface), strings.Join(p.ExitClients, ", "), strings.Join(PrivateNets, ", "), q("exit node: internet only")))
+		}
 		for _, a := range p.Allow {
 			r := nftAllow(p.Iface, a)
 			if a.Self {

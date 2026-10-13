@@ -36,7 +36,13 @@ type Config struct {
 	// must go back through an edge: the agent installs a policy-routing
 	// table with a default route over the interface for marked traffic.
 	DefaultViaPeer string
-	Warnings       []string
+	// Home is set when this device is on the LAN of a node that shares it
+	// (that node answers directly on its LAN endpoint).
+	Home bool
+	// ExitVia is the exit node now carrying this device's internet traffic
+	// (Routes then include 0.0.0.0/0); "" while at home or without one.
+	ExitVia  string
+	Warnings []string
 }
 
 // Input for Build.
@@ -46,10 +52,15 @@ type Input struct {
 	Nodes    []model.Node
 	Forwards []model.Forward
 	Paths    pathsel.Result
-	// LocalAddrs are this device's own LAN addresses. Advertised subnets that
-	// contain one of them are skipped: we are on that LAN already, so the
-	// traffic should not enter the tunnel (e.g. phone on home Wi-Fi).
+	// LocalAddrs are this device's own LAN addresses. An advertised subnet
+	// that contains one of them is skipped when its node also answers
+	// directly on an endpoint inside it: we are on that LAN, so the traffic
+	// should not enter the tunnel (e.g. phone on home Wi-Fi). A café LAN that
+	// merely uses the same range does not count.
 	LocalAddrs []netip.Addr
+	// ExitCapable: the platform can send all traffic into the tunnel (the
+	// phone apps). Elsewhere Self.ExitVia only produces a warning.
+	ExitCapable bool
 }
 
 // Build computes the config.
@@ -125,7 +136,11 @@ func Build(in Input) (Config, error) {
 				cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("%s: route %s overlaps the mesh", n.Name, pfx))
 				continue
 			}
-			if containsAny(pfx, in.LocalAddrs) || ownRoute(in.Self, pfx) {
+			if ownRoute(in.Self, pfx) {
+				continue
+			}
+			if containsAny(pfx, in.LocalAddrs) && onLAN(path, pfx) {
+				cfg.Home = true
 				continue
 			}
 			if other, dup := claimed[pfx]; dup {
@@ -148,6 +163,28 @@ func Build(in Input) (Config, error) {
 			cfg.DefaultViaPeer = edge
 		} else {
 			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("preserve-client-IP: edge %s is not directly connected; disabled", edge))
+		}
+	}
+	if ex := in.Self.ExitVia; ex != "" && !cfg.Home {
+		n, ok := byID[ex]
+		p, hasPeer := peers[ex]
+		if n.Name == "" {
+			n.Name = ex
+		}
+		switch {
+		case !in.ExitCapable:
+			cfg.Warnings = append(cfg.Warnings, "exit nodes are only supported in the phone app so far")
+		case !ok || !hasPeer || !n.Exit:
+			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("exit node %s is not offered as an exit any more", n.Name))
+		case !in.Paths.Paths[ex].Direct():
+			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("exit node %s is not directly reachable", n.Name))
+		case cfg.DefaultViaPeer != "":
+			cfg.Warnings = append(cfg.Warnings, "exit node ignored: this node receives real client IPs, which needs the default route")
+		default:
+			all := netip.MustParsePrefix("0.0.0.0/0")
+			p.AllowedIPs = append(p.AllowedIPs, all)
+			cfg.Routes = append(cfg.Routes, all)
+			cfg.ExitVia = ex
 		}
 	}
 	for _, f := range in.Forwards {
@@ -178,6 +215,16 @@ func preserveEdge(in Input) string {
 	}
 	sort.Strings(edges)
 	return edges[0]
+}
+
+// onLAN reports whether path reaches its node directly on an endpoint
+// inside pfx, which proves we share that LAN with it.
+func onLAN(path pathsel.Path, pfx netip.Prefix) bool {
+	if !path.Direct() || path.Endpoint == "" {
+		return false
+	}
+	ap, err := netip.ParseAddrPort(path.Endpoint)
+	return err == nil && pfx.Contains(ap.Addr())
 }
 
 func containsAny(p netip.Prefix, addrs []netip.Addr) bool {

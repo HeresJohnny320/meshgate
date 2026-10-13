@@ -255,6 +255,8 @@ type NodePatch struct {
 	Relay     *bool     `json:"relay,omitempty"`
 	ViaRelay  *string   `json:"via_relay,omitempty"`
 	LANPolicy *string   `json:"lan_policy,omitempty"`
+	Exit      *bool     `json:"exit,omitempty"`
+	ExitVia   *string   `json:"exit_via,omitempty"`
 }
 
 // UpdateNode edits a node.
@@ -294,6 +296,18 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.ViaRelay != nil {
 		n.ViaRelay = *p.ViaRelay
+	}
+	if p.Exit != nil {
+		n.Exit = *p.Exit && n.Kind == model.NodeServer
+	}
+	if p.ExitVia != nil {
+		if v := *p.ExitVia; v != "" {
+			ex, ok := store.Get[model.Node](s.Store, model.Key(model.KindNode, v))
+			if !ok || !ex.Exit || v == id {
+				return n, errors.New("that node is not an exit node")
+			}
+		}
+		n.ExitVia = *p.ExitVia
 	}
 	if p.LANPolicy != nil {
 		switch *p.LANPolicy {

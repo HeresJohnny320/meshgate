@@ -203,8 +203,16 @@ or show players' real IPs; use Linux or pfSense for those.
    or `sudo meshgate token` on any server.
 3. In the app, tap **Scan QR code**, then **Join**, then turn on the switch.
 
-The app picks the path by itself: straight to your home network when you're
-on home Wi-Fi, through the nearest VPS otherwise.
+Leave the switch on all the time. The app picks the path by itself:
+
+- **At home** (it reaches your pfSense or home server directly on its LAN):
+  your home network is used normally, no detour.
+- **Anywhere else** (mobile data, a café, work Wi-Fi): your home network and
+  mesh devices are reached through the nearest VPS, so `192.168.1.x` works as
+  if you were home. A network that only *looks* like home (same address range)
+  doesn't count; the app checks that your home node actually answers there.
+- **Exit node** (optional): away from home, all internet traffic can leave
+  through one of your VPSs; see [Exit nodes](#exit-nodes-browse-through-a-vps).
 
 **Admin from the phone:** the **Admin** card opens the full dashboard through
 the tunnel. Sign in with the dashboard admin login. It needs a node with the
@@ -340,6 +348,27 @@ router normally should not (it would use your home upload), but you can turn
 it on later: web UI → **Nodes** → **Edit** → tick *Relay* and make sure its
 public address is in *Endpoints*. Add a second VPS as another relay for
 failover; devices switch to it automatically.
+
+### Exit nodes (browse through a VPS)
+
+An **exit node** sends a device's internet traffic out through one of your
+servers, so websites see that server's IP instead of the network you're on.
+With several VPSs, each device can use a different one.
+
+1. Web UI → **Nodes** → **Edit** on the VPS → tick *Exit node* (TUI: `1`, `e`).
+2. **Edit** on the phone → *Internet traffic away from home* → *Through vps*.
+
+The phone shows *Internet: through vps* when it's active. Its DNS lookups go
+through the exit too. At home the phone uses your own connection, and your
+home network stays reachable everywhere. Turn it off again with *Its own
+connection*.
+
+- Supported in the Android app. Linux and Windows clients don't use exit nodes
+  yet.
+- Exit traffic only goes to the internet: it can't reach the exit node's own
+  LANs or private networks.
+- All browsing then uses the VPS's bandwidth, and some sites challenge VPS IPs
+  more often.
 
 ### Every change: all nodes or only this node
 
@@ -591,6 +620,7 @@ Early but working.
 | Windows | compiles and vets; not yet run on real Windows |
 | iOS | not released |
 
-Not yet: IPv6 inside the mesh, MagicDNS-style names, exit nodes, rules between
+Not yet: IPv6 inside the mesh, MagicDNS-style names, exit nodes for Linux and
+Windows clients, rules between
 two mesh devices (rules cover traffic into LANs and to nodes), NAT hole
 punching between two NATed homes (relays are used instead).

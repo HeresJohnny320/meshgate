@@ -243,3 +243,47 @@ func nftCheck(t *testing.T, script string) {
 		t.Fatalf("nft -c: %v\n%s\n%s", err, out, body)
 	}
 }
+
+func TestExitNode(t *testing.T) {
+	v := vps
+	v.Exit = true
+	ph := phone
+	ph.ExitVia = "vps"
+	i := in(v)
+	i.Nodes = []model.Node{v, home, ph, laptop}
+	s := RenderNFT(Build(i))
+	if !strings.Contains(s, `iifname "mg0" oifname != "mg0" ip saddr { 100.88.0.4 } masquerade comment "exit node"`) {
+		t.Errorf("exit masquerade missing:\n%s", s)
+	}
+	nftCheck(t, s)
+
+	// Restricted exit node: internet only, never its private networks.
+	v.LANPolicy = model.PolicyRestricted
+	i = in(v)
+	i.Nodes = []model.Node{v, home, ph, laptop}
+	s = RenderNFT(Build(i))
+	if !strings.Contains(s, `ip saddr { 100.88.0.4 } ip daddr != { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } accept`) {
+		t.Errorf("restricted exit forward missing:\n%s", s)
+	}
+	nftCheck(t, s)
+
+	i.WANIface = "igb0"
+	nat, _, filter := RenderPF(Build(i))
+	for _, want := range []string{"nat on igb0 inet from { 100.88.0.4 } to any -> (igb0:0)"} {
+		if !strings.Contains(nat, want) {
+			t.Errorf("pf nat missing %q:\n%s", want, nat)
+		}
+	}
+	if !strings.HasPrefix(filter, "table <meshgate_private> const") ||
+		!strings.Contains(filter, "pass in quick on mg0 inet from { 100.88.0.4 } to ! <meshgate_private> keep state") {
+		t.Errorf("pf exit filter wrong:\n%s", filter)
+	}
+
+	// Not offered as exit: nothing, even if a device still points at it.
+	v.Exit = false
+	i = in(v)
+	i.Nodes = []model.Node{v, home, ph}
+	if s := RenderNFT(Build(i)); strings.Contains(s, "exit node") {
+		t.Errorf("exit rules on a node that is not an exit:\n%s", s)
+	}
+}

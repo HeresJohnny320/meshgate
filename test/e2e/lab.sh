@@ -180,6 +180,21 @@ check "phone fails over to $OTHER" "test \"\$(pj \"print(s['home_relay'])\")\" =
 check "phone reaches home through $OTHER" "x phone ping -c3 -W2 $HOME_IP >/dev/null"
 x inet ip link set $DOWN up
 
+echo; echo "== exit node: phone's internet traffic leaves through vps"
+ip netns exec fr python3 "$HERE/gameserver.py" 7000 > /dev/null 2>&1 & echo $! > "$D/whoami.pid"
+sleep 1
+myip() { x phone sh -c 'echo | nc -w3 198.18.1.5 7000' 2>/dev/null | sed -n 's/.*you are //p'; }
+check "without exit node the internet sees the phone's LTE IP" "test \"\$(myip)\" = 198.18.3.60"
+PHONE_ID=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([n["value"]["id"] for n in v["nodes"] if n["value"]["name"]=="phone"][0])')
+api vps node "{\"id\":\"$VPS_ID\",\"patch\":{\"exit\":true},\"scope\":\"cluster\"}" >/dev/null
+api vps node "{\"id\":\"$PHONE_ID\",\"patch\":{\"exit_via\":\"$VPS_ID\"},\"scope\":\"cluster\"}" >/dev/null
+i=0; while [ "$(pj "print(s.get('exit',''))")" != vps ] && [ $i -lt 45 ]; do i=$((i+1)); sleep 1; done
+echo "phone: exit=$(pj "print(s.get('exit',''))")"
+check "phone uses vps as exit node" "test \"\$(pj \"print(s.get('exit',''))\")\" = vps"
+check "the internet sees the vps IP" "test \"\$(myip)\" = 203.0.113.10"
+check "phone DNS goes through the exit" "grep -q 'dns: \\[1.1.1.1' '$D/phone.log'"
+check "phone still reaches home LAN with exit node" "x phone ping -c2 -W2 192.168.1.10 >/dev/null"
+
 echo; echo "== phone walks into home Wi-Fi"
 x phone ip link set wifi up
 x phone ip route replace default via 192.168.1.1 dev wifi
@@ -189,7 +204,8 @@ sleep 12
 echo "phone: home path=$(peerpath home)"
 if [ "${DEBUG:-}" ]; then cat "$D/phone.json"; echo; x phone ip route; x phone ip addr show wifi; tail -15 "$D/phone.log"; x phone sh -c 'echo; timeout 2 nc -u -w1 192.168.1.10 51822 </dev/null; echo nc=$?'; fi
 check "phone goes direct to home on Wi-Fi" "test \"\$(peerpath home)\" = direct"
-check "phone excludes home LAN from tunnel on Wi-Fi" "! x phone ip route show dev mgphone | grep -q 192.168.1.0"
+check "phone excludes home LAN from tunnel on Wi-Fi" "! x phone ip route show table 51820 | grep -q 192.168.1.0"
+check "phone skips the exit node at home" "test \"\$(myip)\" = 198.51.100.20"
 check "phone reaches home mesh IP on Wi-Fi" "x phone ping -c2 -W2 $HOME_IP >/dev/null"
 
 echo; echo "== disable a forward: its port must be blocked, then enable it again"

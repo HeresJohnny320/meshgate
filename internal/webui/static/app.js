@@ -69,6 +69,7 @@ $("#tabs").addEventListener("click", (e) => {
 const nodeName = (id) => view.nodes.find((n) => n.value.id === id)?.value.name || id;
 const servers = () => view.nodes.filter((n) => n.value.kind === "server").map((n) => n.value);
 const relays = () => servers().filter((n) => n.relay && (n.endpoints || []).length);
+const exits = () => servers().filter((n) => n.exit);
 
 function ago(ts) {
   const t = new Date(ts).getTime();
@@ -140,14 +141,15 @@ function renderNodes(rt) {
       hs = agoText(s);
       path = p.path === "direct" ? "direct" : p.path ? "via " + esc(nodeName(p.path.replace(/^via /, ""))) : "";
     }
-    const roles = [n.kind, n.relay ? "relay" : "", n.webui ? "web ui" : ""].filter(Boolean).map((r) => `<span class="chip">${r}</span>`).join(" ");
+    const roles = [n.kind, n.relay ? "relay" : "", n.exit ? "exit node" : "", n.webui ? "web ui" : "",
+      n.exit_via ? "internet via " + nodeName(n.exit_via) : ""].filter(Boolean).map((r) => `<span class="chip">${esc(r)}</span>`).join(" ");
     return `<tr>
       <td><b>${esc(n.name)}</b>${localChip(it)}</td><td>${roles}</td><td class="mono">${esc(n.mesh_ip)}</td>
       <td>${state}</td><td>${path}</td><td>${hs}</td>
       <td class="mono">${esc(p?.endpoint || "")}</td>
       <td>${p ? bytes(p.rx_bytes) + " / " + bytes(p.tx_bytes) : ""}</td>
       <td class="mono">${esc((n.routes || []).join(", "))}${(n.routes || []).length ? ({ restricted: ' <span class="chip local">restricted</span>', firewall: ' <span class="chip local">pfSense rules</span>' }[n.lan_policy] || ' <span class="chip">open</span>') : ""}</td>
-      <td class="actions">${n.kind === "server" || n.kind === "static" ? `<button class="small" data-edit-node="${esc(n.id)}">Edit</button>` : ""}
+      <td class="actions"><button class="small" data-edit-node="${esc(n.id)}">Edit</button>
         ${n.id !== view.self_id ? `<button class="small danger" data-del="node:${esc(n.id)}">Remove</button>` : ""}</td></tr>`;
   });
   $("#nodes").innerHTML = `<tr><th>Name</th><th>Role</th><th>Mesh IP</th><th>State</th><th>Path</th><th>Handshake</th><th>Endpoint</th><th>Rx / Tx</th><th>Shared subnets / policy</th><th></th></tr>` + rows.join("");
@@ -323,12 +325,18 @@ function routeDialog(it) {
 
 function nodeDialog(it) {
   const n = it.value;
+  const exitOptions = `<option value="">Its own connection</option>` + exits().filter((x) => x.id !== n.id)
+    .map((x) => `<option value="${esc(x.id)}" ${n.exit_via === x.id ? "selected" : ""}>Through ${esc(x.name)}</option>`).join("");
   const relayField = n.kind === "static"
     ? `<label class="full">Connects through relay <select name="via_relay">${nodeOptions(relays(), n.via_relay)}</select></label>`
+    : n.kind === "client"
+    ? `<label class="full">Internet traffic away from home <select name="exit_via">${exitOptions}</select></label>
+       <p class="hint full">Through an exit node, websites see that node's IP instead of the device's network. At home the device uses your own connection. Supported in the phone app.</p>`
     : `<label class="full">Endpoints (host:port, one per line — public IP/DNS, LAN IP, router port-forward)
         <textarea name="endpoints" rows="3">${esc((n.endpoints || []).join("\n"))}</textarea></label>
        <label class="full">Shared LAN subnets (one per line) <textarea name="routes" rows="2">${esc((n.routes || []).join("\n"))}</textarea></label>
        <label class="inline full"><input type="checkbox" name="relay" ${n.relay ? "checked" : ""}> Relay (public endpoint reachable from anywhere)</label>
+       <label class="inline full"><input type="checkbox" name="exit" ${n.exit ? "checked" : ""}> Exit node (devices you pick send their internet traffic out through this node)</label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
          <select name="lan_policy">
            <option value="open" ${!["restricted", "firewall"].includes(n.lan_policy) ? "selected" : ""}>Open: any mesh device</option>
@@ -340,7 +348,9 @@ function nodeDialog(it) {
       const lines = (k) => (fd.get(k) || "").split("\n").map((s) => s.trim()).filter(Boolean);
       const patch = { name: fd.get("name") };
       if (n.kind === "static") patch.via_relay = fd.get("via_relay");
-      else Object.assign(patch, { endpoints: lines("endpoints"), routes: lines("routes"), relay: fd.get("relay") === "on", lan_policy: fd.get("lan_policy") });
+      else if (n.kind === "client") patch.exit_via = fd.get("exit_via");
+      else Object.assign(patch, { endpoints: lines("endpoints"), routes: lines("routes"), relay: fd.get("relay") === "on",
+        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy") });
       await api("/api/node", { id: n.id, patch, scope: fd.get("scope") });
     });
 }

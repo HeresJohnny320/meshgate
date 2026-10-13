@@ -33,6 +33,7 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/heresjohnny320/meshgate/internal/fw"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/meshcfg"
 	"github.com/heresjohnny320/meshgate/internal/model"
@@ -68,7 +69,13 @@ type TunnelSettings struct {
 	Prefix  int      `json:"prefix"`  // e.g. 16
 	Routes  []string `json:"routes"`  // CIDRs to send into the tunnel
 	MTU     int      `json:"mtu"`
+	// DNS servers to use while an exit node carries all traffic (so lookups
+	// leave through the exit too, not through the local network).
+	DNS []string `json:"dns,omitempty"`
 }
+
+// exitDNS are the resolvers used through an exit node.
+var exitDNS = []string{"1.1.1.1", "9.9.9.9"}
 
 type identity struct {
 	NodeID     string        `json:"node_id"`
@@ -447,13 +454,17 @@ func (e *Engine) reconcile() error {
 	e.publishStatus(res, statuses[self.ID])
 	e.prev = &res
 
-	cfg, err := meshcfg.Build(meshcfg.Input{Network: netw, Self: self, Nodes: nodes, Paths: res, LocalAddrs: parseAddrs(e.plat.LocalAddresses())})
+	cfg, err := meshcfg.Build(meshcfg.Input{Network: netw, Self: self, Nodes: nodes, Paths: res,
+		LocalAddrs: parseAddrs(e.plat.LocalAddresses()), ExitCapable: true})
 	if err != nil {
 		return err
 	}
 	ts := TunnelSettings{Address: cfg.Address.Addr().String(), Prefix: cfg.Address.Bits(), Routes: []string{netw.CIDR}, MTU: MTU}
 	for _, r := range cfg.Routes {
 		ts.Routes = append(ts.Routes, r.String())
+	}
+	if cfg.ExitVia != "" {
+		ts.DNS = exitDNS
 	}
 	b, _ := json.Marshal(ts)
 	if string(b) != e.settings || e.dev == nil {
@@ -501,6 +512,10 @@ func (e *Engine) newDevice(fd int32) error {
 		dev.Close()
 		return err
 	}
+	// Where sockets can be marked (Linux, phonesim), keep WireGuard's own
+	// traffic out of a tunnel that carries everything. Android refuses the
+	// mark and uses Protect below instead.
+	dev.IpcSet(fmt.Sprintf("fwmark=%d\n", fw.MarkBypass))
 	if err := dev.Up(); err != nil {
 		dev.Close()
 		return err
@@ -583,6 +598,12 @@ type status struct {
 	Peers     []peerStatus `json:"peers"`
 	// Admin lists web UIs reachable through the mesh (login required).
 	Admin []adminLink `json:"admin"`
+	// Home: on the LAN of a node that shares it. Exit: the exit node now
+	// carrying internet traffic; ExitWanted: the one picked for this device.
+	Home       bool     `json:"home"`
+	Exit       string   `json:"exit,omitempty"`
+	ExitWanted string   `json:"exit_wanted,omitempty"`
+	Warnings   []string `json:"warnings,omitempty"`
 }
 
 type adminLink struct {
@@ -616,9 +637,12 @@ func (e *Engine) StatusJSON() string {
 	if e.prev != nil {
 		st.HomeRelay = names[e.prev.HomeRelay]
 	}
+	if e.lastCfg != nil {
+		st.Home, st.Exit, st.Warnings = e.lastCfg.Home, names[e.lastCfg.ExitVia], e.lastCfg.Warnings
+	}
 	for _, n := range nodes {
 		if n.ID == e.id.NodeID {
-			st.Name, st.MeshIP = n.Name, n.MeshIP
+			st.Name, st.MeshIP, st.ExitWanted = n.Name, n.MeshIP, names[n.ExitVia]
 			continue
 		}
 		if n.WebUI && n.MeshIP != "" {

@@ -83,6 +83,12 @@ type Node struct {
 	LANPolicy string `json:"lan_policy,omitempty"`
 	// ViaRelay pins a node behind one relay (used for NodeStatic).
 	ViaRelay string `json:"via_relay,omitempty"`
+	// Exit offers this server as an exit node: devices that pick it send
+	// their internet traffic out through it.
+	Exit bool `json:"exit,omitempty"`
+	// ExitVia is the exit node this device uses for internet traffic while
+	// it is away from home ("" = its own connection).
+	ExitVia string `json:"exit_via,omitempty"`
 	// JoinAddr/JoinFP let other devices join through this node.
 	JoinAddr string `json:"join_addr,omitempty"`
 	JoinFP   string `json:"join_fp,omitempty"`

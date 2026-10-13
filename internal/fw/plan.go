@@ -76,6 +76,9 @@ type Plan struct {
 	Blocked []DNAT
 	// LANs maps shared subnets to the local interface that reaches them.
 	LANs []LANRoute
+	// ExitClients are mesh IPs of devices using this node as their exit
+	// node: their internet traffic is masqueraded out of this host.
+	ExitClients []string
 	// PreserveEdgeIP is the mesh IP of the edge delivering real client IPs.
 	PreserveEdgeIP string
 	// PreserveIn lists those inbound services (pf needs them for reply-to).
@@ -93,6 +96,10 @@ type Plan struct {
 	Own      []Allow
 	Warnings []string
 }
+
+// PrivateNets are never reachable through an exit node: exit traffic is
+// for the internet, not for this node's LANs or the mesh.
+var PrivateNets = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16"}
 
 // LANRoute is a shared subnet and the interface it lives on.
 type LANRoute struct {
@@ -168,6 +175,14 @@ func Build(in Input) Plan {
 	}
 	if e, ok := byID[in.PreserveEdge]; ok {
 		p.PreserveEdgeIP = e.MeshIP
+	}
+	if in.Self.Exit {
+		for _, n := range in.Nodes {
+			if n.ExitVia == in.Self.ID && n.MeshIP != "" {
+				p.ExitClients = append(p.ExitClients, n.MeshIP)
+			}
+		}
+		sort.Strings(p.ExitClients)
 	}
 	// Never block a port an enabled forward is using.
 	kept := p.Blocked[:0]

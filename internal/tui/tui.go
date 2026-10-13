@@ -274,6 +274,17 @@ func (m *model_) relayOptions() []option {
 	return o
 }
 
+// exitOptions lists exit nodes a device can send its internet traffic through.
+func (m *model_) exitOptions(self string) []option {
+	o := []option{{"its own connection", ""}}
+	for _, n := range m.v.Nodes {
+		if n.Value.Exit && n.Value.ID != self {
+			o = append(o, option{"through " + n.Value.Name, n.Value.ID})
+		}
+	}
+	return o
+}
+
 func scopeOptions(self string) []option {
 	return []option{{"all nodes", "cluster"}, {"only this node (" + self + ")", "local"}}
 }
@@ -443,10 +454,13 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 		patch := map[string]any{"name": v["name"]}
 		if n.Kind == model.NodeStatic {
 			patch["via_relay"] = v["via"]
+		} else if n.Kind == model.NodeClient {
+			patch["exit_via"] = v["exit_via"]
 		} else if n.Kind == model.NodeServer {
 			patch["endpoints"] = lines(v["endpoints"])
 			patch["routes"] = lines(v["routes"])
 			patch["relay"] = v["relay"] == "true"
+			patch["exit"] = v["exit"] == "true"
 			patch["lan_policy"] = v["policy"]
 		}
 		return m.api.Post("node", map[string]any{"id": n.ID, "patch": patch, "scope": v["scope"]}, nil)
@@ -456,9 +470,12 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 		f.text("endpoints", "Endpoints (host:port, comma)", strings.Join(n.Endpoints, ", "), "1.2.3.4:51820, 192.168.1.10:51820").
 			text("routes", "Shared subnets (comma)", strings.Join(n.Routes, ", "), "192.168.1.0/24").
 			toggle("relay", "Relay (public endpoint)", n.Relay).
+			toggle("exit", "Exit node (devices may use it for internet)", n.Exit).
 			choice("policy", "LAN policy", []option{{"open: any mesh device", model.PolicyOpen}, {"restricted: rules only", model.PolicyRestricted}, {"firewall: pfSense rules decide", model.PolicyFirewall}}, policyOf(n))
 	case model.NodeStatic:
 		f.choice("via", "Connects through relay", m.relayOptions(), n.ViaRelay)
+	case model.NodeClient:
+		f.choice("exit_via", "Internet away from home", m.exitOptions(n.ID), n.ExitVia)
 	}
 	m.form = f.choice("scope", "Apply to", scopeOptions(m.name(m.v.SelfID)), scopeOf(it.Local)).init()
 }
