@@ -59,3 +59,31 @@ dialog .card { max-height: 85vh; overflow-y: auto; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: calc(100vw - 32px); }
 @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } header { padding: 10px 16px; } }
+
+/* Phones: compact sticky header with swipeable tabs, tables as cards. */
+@media (max-width: 640px) {
+  header { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 10px 12px 0; }
+  #logout { grid-row: 1; grid-column: 2; padding: 6px 12px; }
+  nav { grid-row: 2; grid-column: 1 / -1; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px 8px; }
+  nav::-webkit-scrollbar { display: none; }
+  nav button { flex: none; white-space: nowrap; }
+  main { padding: 14px 12px 60px; }
+  .row-head { gap: 12px; }
+  .grid2 { grid-template-columns: 1fr; }
+  .card { padding: 14px; }
+  .table-wrap { overflow: visible; background: none; border: none; border-radius: 0; }
+  table, tbody, tr, td { display: block; width: 100%; }
+  tr.head { display: none; }
+  tr { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 4px 14px; margin-bottom: 10px; }
+  td { padding: 7px 0; border-bottom: 1px solid var(--border); white-space: normal; overflow-wrap: anywhere; text-align: right; }
+  td::after { content: ""; display: block; clear: both; }
+  td::before { content: attr(data-label); float: left; margin-right: 12px; color: var(--muted); font-size: 12px; line-height: 21px; text-transform: uppercase; letter-spacing: .04em; text-align: left; }
+  td:first-child { font-size: 16px; text-align: left; padding-top: 10px; }
+  td:first-child::before, td[data-label=""]::before { content: none; }
+  td:empty { display: none; }
+  td.actions { display: flex; flex-wrap: wrap; gap: 8px; border-bottom: none; padding: 10px 0; text-align: left; }
+  td.actions::after { content: none; }
+  td.actions button.small { padding: 8px 14px; font-size: 14px; }
+  td.empty { text-align: center; border: none; }
+  tr td:nth-last-child(1):not(.actions) { border-bottom: none; }
+}

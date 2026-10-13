@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -46,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.journeyapps.barcodescanner.ScanContract
@@ -66,7 +69,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
                 Scaffold { pad ->
-                    Column(Modifier.padding(pad).padding(16.dp).fillMaxSize()) { App() }
+                    Column(Modifier.padding(pad).fillMaxSize()) { App() }
                 }
             }
         }
@@ -110,9 +113,14 @@ fun ColumnScope.App() {
     var adminUrl by remember { mutableStateOf<String?>(null) }
     val url = adminUrl
     when {
-        !status.joined -> JoinScreen { status = parseStatus(Mesh.engine.statusJSON()) }
+        !status.joined -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+            JoinScreen { status = parseStatus(Mesh.engine.statusJSON()) }
+        }
+        // The dashboard gets the whole width; it has its own phone layout.
         url != null -> AdminScreen(url) { adminUrl = null }
-        else -> StatusScreen(status, onAdmin = { adminUrl = it }) { status = parseStatus(Mesh.engine.statusJSON()) }
+        else -> Column(Modifier.fillMaxSize().padding(16.dp)) {
+            StatusScreen(status, onAdmin = { adminUrl = it }) { status = parseStatus(Mesh.engine.statusJSON()) }
+        }
     }
 }
 
@@ -269,9 +277,13 @@ fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
         val w = web
         if (w != null && w.canGoBack()) w.goBack() else onClose()
     }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
         TextButton(onClick = onClose) { Text("‹ Back") }
-        Text(url, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
+        Text(
+            android.net.Uri.parse(url).host ?: url,
+            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace,
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
         TextButton(onClick = { web?.reload() }) { Text("Reload") }
     }
     AndroidView(

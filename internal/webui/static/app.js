@@ -111,6 +111,19 @@ async function refresh() {
   if (cur) sel.value = cur;
   const nf = $("#network-form");
   if (document.activeElement?.form !== nf) nf.acme_email.value = view.network.acme_email || "";
+  labelTables();
+}
+
+// On phones every table row is shown as a card (see app.css); label each
+// cell with its column name so the cards stay readable.
+function labelTables() {
+  document.querySelectorAll("main table").forEach((t) => {
+    const heads = [...t.querySelectorAll("th")].map((th) => th.textContent);
+    t.querySelectorAll("tr").forEach((tr) => {
+      tr.classList.toggle("head", !!tr.querySelector("th"));
+      [...tr.children].forEach((td, i) => { if (td.tagName === "TD") td.dataset.label = heads[i] || ""; });
+    });
+  });
 }
 
 function renderNodes(rt) {
