@@ -110,6 +110,7 @@ type Engine struct {
 	lastSync time.Time
 	kick     chan struct{}
 	syncKick chan struct{}
+	admin    adminState // the app's dashboard session (admin.go)
 }
 
 // NewEngine opens (or prepares) state in dir, e.g. the app's files dir or

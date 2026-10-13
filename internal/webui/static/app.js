@@ -9,16 +9,42 @@ let timer = null;
 const BASE = document.documentElement.dataset.api || "";
 if (BASE) document.getElementById("logout").classList.add("hidden");
 
+// Inside the Android app the dashboard is bundled in the APK and talks to
+// whichever server answers, through the app (window.MeshgateApp).
+const bridge = window.MeshgateApp;
+const bridgeWait = {};
+let bridgeSeq = 0;
+window.__meshgateReply = (id, status, body) => {
+  const f = bridgeWait[id];
+  delete bridgeWait[id];
+  if (f) f(status, body);
+};
+function viaApp(path, body) {
+  return new Promise((resolve) => {
+    const id = ++bridgeSeq;
+    bridgeWait[id] = (status, text) => resolve({ status, text });
+    bridge.request(id, body === undefined ? "GET" : "POST", path, body === undefined ? "" : JSON.stringify(body));
+  });
+}
+
 async function api(path, body) {
-  const opts = body === undefined ? {} : {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Meshgate": "1" },
-    body: JSON.stringify(body),
-  };
-  const res = await fetch(BASE + path, opts);
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401) { showLogin(); throw new Error("login required"); }
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  let status, data;
+  if (bridge) {
+    const r = await viaApp(path, body);
+    status = r.status;
+    try { data = JSON.parse(r.text); } catch { data = {}; }
+  } else {
+    const opts = body === undefined ? {} : {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Meshgate": "1" },
+      body: JSON.stringify(body),
+    };
+    const res = await fetch(BASE + path, opts);
+    status = res.status;
+    data = await res.json().catch(() => ({}));
+  }
+  if (status === 401 && path !== "/auth/login") { showLogin(); throw new Error("login required"); }
+  if (status < 200 || status >= 300) throw new Error(data.error || "request failed (" + status + ")");
   return data;
 }
 
@@ -62,7 +88,94 @@ $("#tabs").addEventListener("click", (e) => {
   if (!b) return;
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + b.dataset.tab));
+  clearInterval(trafficTimer);
+  if (b.dataset.tab === "traffic") {
+    refreshTraffic().catch((err) => toast(err.message));
+    trafficTimer = setInterval(() => refreshTraffic().catch(() => {}), 3000);
+  }
 });
+
+// ---------- traffic ----------
+
+let trafficTimer = null;
+const rate = (b) => (b >= 1 ? bytes(Math.round(b)) + "/s" : "–");
+const empty = (cols, text) => `<tr><td colspan="${cols}" class="empty">${text}</td></tr>`;
+
+async function refreshTraffic() {
+  if (!view) return;
+  const reports = await api("/api/traffic");
+  const fwd = {}, routes = {}, rules = {}, recent = [], devices = [];
+  const add = (m, id, r) => {
+    const t = (m[id] ||= { in: 0, out: 0, in_rate: 0, out_rate: 0, requests: 0, errors: 0, req_rate: 0 });
+    for (const k in t) t[k] += r[k] || 0;
+  };
+  for (const t of reports) {
+    for (const [id, r] of Object.entries(t.forwards || {})) add(fwd, id, r);
+    for (const [id, r] of Object.entries(t.routes || {})) add(routes, id, r);
+    for (const [id, n] of Object.entries(t.acls || {})) rules[id] = (rules[id] || 0) + n;
+    for (const [id, r] of Object.entries(t.peers || {})) devices.push({ by: t.node, peer: id, ...r });
+    recent.push(...(t.recent || []));
+  }
+  const node = (id) => view.nodes.find((n) => n.value.id === id)?.value;
+  const targetIP = (x) => x.target_ip || node(x.target_node)?.mesh_ip || "?";
+  const speed = (r) => (r.in_rate || 0) + (r.out_rate || 0);
+
+  // By target IP: forwards and HTTPS routes to the same machine add up.
+  const ips = {};
+  const ipAdd = (ip, label, r) => {
+    const t = (ips[ip] ||= { ip, uses: [], in: 0, out: 0, in_rate: 0, out_rate: 0 });
+    t.uses.push(label);
+    for (const k of ["in", "out", "in_rate", "out_rate"]) t[k] += r[k] || 0;
+  };
+  (view.forwards || []).forEach(({ value: f }) => ipAdd(targetIP(f), `${f.name} (${f.proto} ${f.listen_port})`, fwd[f.id] || {}));
+  (view.routes || []).forEach(({ value: r }) => ipAdd(targetIP(r), r.hostname, routes[r.id] || {}));
+  const ipRows = Object.values(ips).sort((a, b) => speed(b) - speed(a) || b.in + b.out - (a.in + a.out));
+  const top = Math.max(...ipRows.map(speed), 0);
+  $("#traffic-ips").innerHTML = `<tr><th>Target IP</th><th>Used by</th><th>To it</th><th>From it</th><th>Total</th></tr>` +
+    (ipRows.map((t) => `<tr><td class="mono"><b class="${top > 0 && speed(t) === top ? "busy" : ""}">${esc(t.ip)}</b>${top > 0 && speed(t) === top ? ' <span class="chip">busiest</span>' : ""}</td>
+      <td>${esc(t.uses.join(", "))}</td><td>${rate(t.in_rate)}</td><td>${rate(t.out_rate)}</td>
+      <td>${bytes(t.in + t.out)}</td></tr>`).join("") || empty(5, "No forwards or HTTPS routes yet"));
+
+  $("#traffic-forwards").innerHTML = `<tr><th>Forward</th><th>Public</th><th>Target</th><th>To target</th><th>From target</th><th>Total in / out</th></tr>` +
+    ((view.forwards || []).map(({ value: f }) => {
+      const r = fwd[f.id] || {};
+      return `<tr><td><b>${esc(f.name)}</b>${f.enabled ? "" : ' <span class="chip">off</span>'}</td>
+        <td class="mono">${esc(nodeName(f.edge_node))}:${f.listen_port}${f.listen_end ? "-" + f.listen_end : ""}/${esc(f.proto)}</td>
+        <td class="mono">${esc(targetIP(f))}:${f.target_port}</td><td>${rate(r.in_rate)}</td><td>${rate(r.out_rate)}</td>
+        <td>${bytes(r.in || 0)} / ${bytes(r.out || 0)}</td></tr>`;
+    }).join("") || empty(6, "No port forwards yet"));
+
+  $("#traffic-routes").innerHTML = `<tr><th>Hostname</th><th>Requests/min</th><th>Requests</th><th>Errors</th><th>Speed</th><th>Total</th></tr>` +
+    ((view.routes || []).map(({ value: rt }) => {
+      const r = routes[rt.id] || {};
+      return `<tr><td><b>${esc(rt.hostname)}</b></td><td>${Math.round((r.req_rate || 0) * 60)}</td><td>${r.requests || 0}</td>
+        <td>${r.errors ? `<span class="busy">${r.errors}</span>` : 0}</td><td>${rate(speed(r))}</td><td>${bytes((r.in || 0) + (r.out || 0))}</td></tr>`;
+    }).join("") || empty(6, "No HTTPS routes yet"));
+
+  recent.sort((a, b) => b.time - a.time);
+  $("#traffic-recent").innerHTML = `<tr><th>Time</th><th>Visitor</th><th>Request</th><th>Status</th><th>Size</th><th>Took</th></tr>` +
+    (recent.slice(0, 30).map((q) => `<tr><td>${new Date(q.time * 1000).toLocaleTimeString()}</td><td class="mono">${esc(q.client)}</td>
+      <td class="mono">${esc(q.method)} ${esc(q.host)}${esc(q.path)}</td><td>${q.status >= 500 ? `<span class="busy">${q.status}</span>` : q.status}</td>
+      <td>${bytes(q.bytes)}</td><td>${q.ms} ms</td></tr>`).join("") || empty(6, "No HTTPS requests yet"));
+
+  // A link between two servers is measured at both ends: keep one row.
+  const links = {};
+  for (const d of devices) {
+    const k = [d.by, d.peer].sort().join("|");
+    if (!links[k] || d.in + d.out > links[k].in + links[k].out) links[k] = d;
+  }
+  devices.length = 0;
+  devices.push(...Object.values(links));
+  devices.sort((a, b) => speed(b) - speed(a) || b.in + b.out - (a.in + a.out));
+  $("#traffic-devices").innerHTML = `<tr><th>Device</th><th>Link</th><th>Received</th><th>Sent</th><th>Total</th></tr>` +
+    (devices.map((d) => `<tr><td><b>${esc(nodeName(d.peer))}</b></td><td>${esc(nodeName(d.peer))} ↔ ${esc(nodeName(d.by))}</td>
+      <td>${rate(d.out_rate)}</td><td>${rate(d.in_rate)}</td><td>${bytes(d.in + d.out)}</td></tr>`).join("") || empty(5, "No traffic yet"));
+
+  $("#traffic-rules").innerHTML = `<tr><th>Rule</th><th>Enforced on</th><th>Connections allowed</th></tr>` +
+    ((view.acls || []).map(({ value: a }) => `<tr><td><b>${esc(a.name)}</b></td><td>${esc(nodeName(a.node))}</td><td>${rules[a.id] || 0}</td></tr>`).join("")
+      || empty(3, "No access rules yet"));
+  labelTables();
+}
 
 // ---------- rendering ----------
 
@@ -339,6 +452,7 @@ function nodeDialog(it) {
        <label class="full">Shared LAN subnets (one per line) <textarea name="routes" rows="2">${esc((n.routes || []).join("\n"))}</textarea></label>
        <label class="inline full"><input type="checkbox" name="relay" ${n.relay ? "checked" : ""}> Relay (public endpoint reachable from anywhere)</label>
        <label class="inline full"><input type="checkbox" name="exit" ${n.exit ? "checked" : ""}> Exit node (devices you pick send their internet traffic out through this node)</label>
+       <label class="inline full"><input type="checkbox" name="app_admin" ${n.app_admin_off ? "" : "checked"}> Phone app may manage the mesh through this node</label>
        <label class="full">Test service port (TCP+UDP, empty = off; see Tools) <input name="test_port" type="number" min="1" max="65535" value="${n.test_port || ""}" placeholder="off"></label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
          <select name="lan_policy">
@@ -353,7 +467,7 @@ function nodeDialog(it) {
       if (n.kind === "static") patch.via_relay = fd.get("via_relay");
       else if (n.kind === "client") patch.exit_via = fd.get("exit_via");
       else Object.assign(patch, { endpoints: lines("endpoints"), routes: lines("routes"), relay: fd.get("relay") === "on",
-        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0 });
+        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0, app_admin: fd.get("app_admin") === "on" });
       await api("/api/node", { id: n.id, patch, scope: fd.get("scope") });
     });
 }

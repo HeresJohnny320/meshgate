@@ -64,6 +64,7 @@ type Agent struct {
 	testPort int
 	testStop context.CancelFunc
 	testErr  string
+	meters   meters // traffic counters (traffic.go)
 }
 
 // New prepares an agent from the node config.
@@ -84,7 +85,7 @@ func New(cfg config.Node) (*Agent, error) {
 		proxy:     &proxy.Proxy{StorageDir: cfg.CertMagicDir()},
 		startedAt: time.Now(),
 	}
-	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime}
+	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic}
 	return a, nil
 }
 
@@ -165,7 +166,15 @@ func (a *Agent) Run(ctx context.Context) error {
 		}()
 	}
 	start("mesh api", func() error {
-		return serve(ctx, net.JoinHostPort(self.MeshIP, strconv.Itoa(a.Cfg.MeshPort)), a.sync.Handler(), nil)
+		// Server-to-server sync, plus the phone app's management API.
+		mux := http.NewServeMux()
+		mux.Handle("/", a.sync.Handler())
+		mux.HandleFunc("GET /v1/traffic", a.serveTraffic)
+		mux.Handle("/admin/", webui.AppAPI(a.ops, func() bool {
+			s, err := a.self()
+			return err != nil || s.AppAdminOff
+		}))
+		return serve(ctx, net.JoinHostPort(self.MeshIP, strconv.Itoa(a.Cfg.MeshPort)), mux, nil)
 	})
 	start("local api", func() error { return a.serveLocal(ctx) })
 	if self.Kind == model.NodeServer && a.Cfg.JoinListen != "" {
@@ -186,6 +195,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}
 	go a.sync.Run(ctx)
+	if self.Kind == model.NodeServer {
+		go a.trafficLoop(ctx)
+	}
 
 	changes := a.Store.Subscribe()
 	tick := time.NewTicker(probe.Interval)
@@ -303,6 +315,7 @@ func (a *Agent) reconcile(ctx context.Context) {
 		// Reload on change, and once a minute in case something flushed our
 		// table/anchors (e.g. `nft flush ruleset`, a manual pfctl -F all).
 		if script != a.lastFW || time.Since(a.lastFWAt) > time.Minute {
+			a.readTraffic() // reloading restarts the counters; keep what they hold
 			if err := fw.Load(script); err != nil {
 				warn = append(warn, "firewall: "+err.Error())
 			} else {

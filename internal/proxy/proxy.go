@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -18,6 +19,8 @@ import (
 	"time"
 
 	"github.com/caddyserver/certmagic"
+
+	"github.com/heresjohnny320/meshgate/internal/traffic"
 )
 
 // Route is a resolved HTTP route.
@@ -38,6 +41,91 @@ type Proxy struct {
 	issuer  *certmagic.ACMEIssuer
 	managed map[string]bool
 	started bool
+
+	statsMu sync.Mutex
+	stats   map[string]*traffic.HostStats
+	recent  []traffic.Request // newest last, at most recentMax
+}
+
+const recentMax = 50
+
+// Stats returns per-hostname counters and the most recent requests.
+func (p *Proxy) Stats() (map[string]traffic.HostStats, []traffic.Request) {
+	p.statsMu.Lock()
+	defer p.statsMu.Unlock()
+	m := map[string]traffic.HostStats{}
+	for h, s := range p.stats {
+		m[h] = *s
+	}
+	return m, append([]traffic.Request(nil), p.recent...)
+}
+
+// counted serves r through l and records it.
+func (p *Proxy) counted(w http.ResponseWriter, r *http.Request, l *live) {
+	start := time.Now()
+	cw := &countWriter{ResponseWriter: w, status: http.StatusOK}
+	var in uint64
+	if r.Body != nil {
+		r.Body = &countReader{ReadCloser: r.Body, n: &in}
+	}
+	l.rp.ServeHTTP(cw, r)
+	host := strings.ToLower(l.route.Hostname)
+	path := r.URL.Path
+	if len(path) > 100 {
+		path = path[:100] + "…"
+	}
+	client := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(client); err == nil {
+		client = h
+	}
+	p.statsMu.Lock()
+	defer p.statsMu.Unlock()
+	if p.stats == nil {
+		p.stats = map[string]*traffic.HostStats{}
+	}
+	s := p.stats[host]
+	if s == nil {
+		s = &traffic.HostStats{}
+		p.stats[host] = s
+	}
+	s.Requests++
+	s.In += in
+	s.Out += cw.n
+	if cw.status >= 500 {
+		s.Errors++
+	}
+	p.recent = append(p.recent, traffic.Request{Time: start.Unix(), Client: client, Method: r.Method, Host: host, Path: path,
+		Status: cw.status, Bytes: cw.n, Ms: time.Since(start).Milliseconds()})
+	if len(p.recent) > recentMax {
+		p.recent = p.recent[len(p.recent)-recentMax:]
+	}
+}
+
+type countWriter struct {
+	http.ResponseWriter
+	status int
+	n      uint64
+}
+
+func (c *countWriter) WriteHeader(code int) { c.status = code; c.ResponseWriter.WriteHeader(code) }
+func (c *countWriter) Write(b []byte) (int, error) {
+	n, err := c.ResponseWriter.Write(b)
+	c.n += uint64(n)
+	return n, err
+}
+
+// Unwrap lets http.ResponseController flush and hijack (streaming, websockets).
+func (c *countWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
+type countReader struct {
+	io.ReadCloser
+	n *uint64
+}
+
+func (c *countReader) Read(b []byte) (int, error) {
+	n, err := c.ReadCloser.Read(b)
+	*c.n += uint64(n)
+	return n, err
 }
 
 type live struct {
@@ -169,7 +257,7 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, u.String(), http.StatusPermanentRedirect)
 		return
 	}
-	l.rp.ServeHTTP(w, r)
+	p.counted(w, r, l)
 }
 
 func (p *Proxy) serveHTTPS(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +272,7 @@ func (p *Proxy) serveHTTPS(w http.ResponseWriter, r *http.Request) {
 	if l.route.ForceHTTPS {
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 	}
-	l.rp.ServeHTTP(w, r)
+	p.counted(w, r, l)
 }
 
 func newReverseProxy(target *url.URL) *httputil.ReverseProxy {

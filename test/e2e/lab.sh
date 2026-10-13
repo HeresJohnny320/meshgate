@@ -129,6 +129,12 @@ check "diag tcp from vps to the test service" "mg vps diag tcp $HOME_IP 8099 >/d
 check "diag http from vps shows the test service" "mg vps diag http http://$HOME_IP:8099/ | grep -q 'node:      home'"
 check "diag udp through the forward from laptop on LTE" "mg lap diag udp 203.0.113.10 25570 | grep -q 'on home'"
 check "diag reports a closed port as failed" "! mg vps diag tcp $HOME_IP 8098 >/dev/null 2>&1"
+TEST_FWD=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([f["value"]["id"] for f in v["forwards"] if f["value"]["name"]=="test"][0])')
+fwdbytes() { api "$1" traffic | python3 -c "import json,sys; ts=json.load(sys.stdin); print(sum(t['forwards'].get('$2',{}).get('in',0)+t['forwards'].get('$2',{}).get('out',0) for t in ts))"; }
+sleep 6
+echo "traffic for the test forward: vps=$(fwdbytes vps $TEST_FWD) bytes, seen from home=$(fwdbytes home $TEST_FWD) bytes"
+check "traffic: vps counts the test forward's bytes" "[ \"\$(fwdbytes vps $TEST_FWD)\" -gt 0 ]"
+check "traffic: home shows the vps forward's numbers too" "[ \"\$(fwdbytes home $TEST_FWD)\" -gt 0 ]"
 api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"test_port\":0},\"scope\":\"cluster\"}" >/dev/null
 sleep 4
 check "test service stops when turned off" "! mg vps diag tcp $HOME_IP 8099 >/dev/null 2>&1"
@@ -174,7 +180,7 @@ start vps2
 
 echo "== phone (mobile engine) joins over LTE"
 PTOK=$(mg vps token --kind client | grep '^mg1\.')
-ip netns exec phone "$PHONESIM" -dir "$D/phone" -join "$PTOK" -name phone -status "$D/phone.json" -myip-url http://198.18.1.5:7001/ > "$D/phone.log" 2>&1 &
+ip netns exec phone "$PHONESIM" -dir "$D/phone" -join "$PTOK" -name phone -status "$D/phone.json" -myip-url http://198.18.1.5:7001/ -cmd "$D/phone.cmd" > "$D/phone.log" 2>&1 &
 echo $! > "$D/phone.pid"
 sleep 15
 pj() { python3 -c "import json,sys; s=json.load(open('$D/phone.json')); $1" 2>/dev/null || true; }
@@ -234,6 +240,23 @@ check "phone goes direct to home on Wi-Fi" "test \"\$(peerpath home)\" = direct"
 check "phone excludes home LAN from tunnel on Wi-Fi" "! x phone ip route show table 51820 | grep -q 192.168.1.0"
 check "phone skips the exit node at home" "test \"\$(myip)\" = 198.51.100.20"
 check "phone reaches home mesh IP on Wi-Fi" "x phone ping -c2 -W2 $HOME_IP >/dev/null"
+
+echo; echo "== app admin keeps working while the server it used is down"
+admin_last() { grep "admin $1" "$D/phone.log" | tail -1; }
+printf '%s\n' 'POST /auth/login {"username":"admin","password":"labpassword"}' 'GET /api/view' > "$D/phone.cmd"
+sleep 4
+admin_last "GET /api/view"
+check "app logs in and reads the mesh" "admin_last 'POST /auth/login' | grep -q 'status=200' && admin_last 'GET /api/view' | grep -q 'status=200'"
+FIRST=$(admin_last "GET /api/view" | sed -n 's/.*server=\([a-z0-9]*\) .*/\1/p')
+echo "answered by: $FIRST"
+[ -n "$FIRST" ] && [ -f "$D/$FIRST.pid" ] || { echo "FAIL  no server answered"; FIRST=vps; FAILED=1; }
+kill "$(cat "$D/$FIRST.pid")" 2>/dev/null || true
+i=0; while kill -0 "$(cat "$D/$FIRST.pid")" 2>/dev/null && [ $i -lt 50 ]; do i=$((i+1)); sleep 0.2; done
+echo 'GET /api/view' > "$D/phone.cmd"
+sleep 12
+admin_last "GET /api/view"
+check "another server answers with the same login" "admin_last 'GET /api/view' | grep 'status=200' | grep -vq 'server=$FIRST '"
+start "$FIRST"; sleep 8
 
 echo; echo "== disable a forward: its port must be blocked, then enable it again"
 MASQ_ID=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([f["value"]["id"] for f in v["forwards"] if f["value"]["name"]=="masq"][0])')

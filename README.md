@@ -214,10 +214,14 @@ Leave the switch on all the time. The app picks the path by itself:
 - **Exit node** (optional): away from home, all internet traffic can leave
   through one of your VPSs; see [Exit nodes](#exit-nodes-browse-through-a-vps).
 
-**Admin from the phone:** the **Admin** card opens the full dashboard through
-the tunnel. Sign in with the dashboard admin login. It needs a node with the
-web UI turned on; if there is none, the card tells you how
-(`meshgate webui enable` on that node).
+**Admin from the phone:** the **Admin** card opens the full dashboard, which is
+built into the app. Sign in with the dashboard admin login. The app manages
+the mesh through **any of your servers** (pfSense, the VPS, …): if the one it
+uses goes down, it moves on to the next without logging in again. No server
+needs the web UI turned on for this, and the VPS serves no web pages: servers
+only answer logged-in management requests from mesh devices, on the mesh-only
+sync port. To keep a server out of it: **Nodes** → **Edit** → untick *Phone app
+may manage the mesh through this node*.
 
 An iPhone app exists in the source but is not released yet (it needs a paid
 Apple developer account). Use the official WireGuard app on iPhone meanwhile.
@@ -245,7 +249,7 @@ Runs only on the machines you chose (installer option 1 or 2, `--webui`, or
 | On that machine | `http://127.0.0.1:8080` |
 | On any device in the mesh (phone, laptop) | `http://<that node's mesh IP>:8080` (mesh IPs are shown by `meshgate status`) |
 | pfSense | *VPN → meshgate* in the pfSense GUI |
-| Android app | the **Admin** card |
+| Android app | the **Admin** card (built into the app; works through any server) |
 | From outside the mesh, on a VPS | `ssh -L 8080:127.0.0.1:8080 you@vps`, then `http://localhost:8080` |
 
 The dashboard is not on the public internet by default. Tabs: **Nodes**,
@@ -371,6 +375,26 @@ connection*.
 - All browsing then uses the VPS's bandwidth, and some sites challenge VPS IPs
   more often.
 
+### Watch live traffic
+
+Web UI or app → **Traffic** (refreshes every 3 seconds):
+
+- **By target IP:** every port forward and HTTPS route to the same machine
+  added up (e.g. `192.168.1.205` = minecraft + valheim), busiest first, with
+  live speed to and from it and the total. Handy for spotting which game or
+  machine is using a lot.
+- **Port forwards:** speed and totals per forward, both directions.
+- **HTTPS routes:** requests per minute, errors, speed, totals, and the last
+  requests (time, visitor IP, path, status, size, how long it took).
+- **Devices:** live speed of each mesh device's link.
+- **Access rules:** how many connections each rule let through.
+
+Forwards and rules are counted by the server that runs them (the edge VPS for
+forwards); the dashboard gathers every server's numbers over the mesh, so you
+see them from pfSense or the phone too. Totals count since meshgate last
+started on that server. Port-forward and rule counters come from Linux servers;
+on pfSense use *Status → Traffic Graph* and the MESHGATE rules tab for its side.
+
 ### Testing that everything works
 
 meshgate has a small built-in test kit, so you can check each piece without
@@ -478,7 +502,7 @@ Then remove the device from the mesh in the web UI or TUI of another node.
 | UDP 51820 | every node (open on relays) | WireGuard |
 | UDP 51822 | every node (open on relays) | path probes (WireGuard port + 2) |
 | TCP 51821 | relays | joins and phone config sync (TLS, pinned) |
-| TCP 51823 | every server, mesh only | config sync between servers |
+| TCP 51823 | every server, mesh only | config sync between servers; the phone app's management requests |
 | TCP 8080 | web UI nodes, localhost + mesh IP | dashboard |
 | TCP 80/443 | edge with HTTPS routes | Let's Encrypt + HTTPS |
 

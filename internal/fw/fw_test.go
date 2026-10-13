@@ -94,11 +94,11 @@ func TestTargetRestricted(t *testing.T) {
 	s := RenderNFT(p)
 	for _, want := range []string{
 		// LAN host rule, ports list incl. range
-		`iifname "mg0" ip saddr { 100.88.0.5 } ip daddr 192.168.1.20/32 meta l4proto tcp th dport { 80, 443, 8000-8100 } accept`,
+		`iifname "mg0" ip saddr { 100.88.0.5 } ip daddr 192.168.1.20/32 meta l4proto tcp th dport { 80, 443, 8000-8100 } counter name "a_a" accept`,
 		// VLAN subnet for anyone
-		`iifname "mg0" ip daddr 192.168.20.0/24 meta l4proto udp th dport { 53 } accept`,
+		`iifname "mg0" ip daddr 192.168.20.0/24 meta l4proto udp th dport { 53 } counter name "a_b" accept`,
 		// self rule (input chain has no daddr)
-		`iifname "mg0" ip saddr { 100.88.0.4 } meta l4proto icmp accept`,
+		`iifname "mg0" ip saddr { 100.88.0.4 } meta l4proto icmp counter name "a_c" accept`,
 		// forwards ending here are allowed automatically
 		`iifname "mg0" meta l4proto tcp th dport { 25565 } accept comment "forward minecraft"`,
 		`iifname "mg0" ip daddr 192.168.1.20/32 meta l4proto tcp th dport { 443 } accept comment "forward nas-web"`,
@@ -330,6 +330,21 @@ func TestTestServiceStaysReachable(t *testing.T) {
 	s := RenderNFT(Build(i))
 	if !strings.Contains(s, `meta l4proto udp th dport { 8099 } accept comment "meshgate test service"`) {
 		t.Errorf("restricted nft lacks test service:\n%s", s)
+	}
+	nftCheck(t, s)
+}
+
+func TestForwardCounters(t *testing.T) {
+	s := RenderNFT(Build(in(vps)))
+	for _, want := range []string{
+		"\tcounter f_1_in {\n\t}",
+		`meta l4proto tcp ct status dnat ct original proto-dst 25565 ct direction original counter name "f_1_in"`,
+		`meta l4proto tcp ct status dnat ct original proto-dst 25565 ct direction reply counter name "f_1_out"`,
+		`meta l4proto udp ct status dnat ct original proto-dst 2456-2458 ct direction reply counter name "f_2_out"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in\n%s", want, s)
+		}
 	}
 	nftCheck(t, s)
 }

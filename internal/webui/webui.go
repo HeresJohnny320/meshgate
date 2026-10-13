@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +40,7 @@ type UI struct {
 
 	mu       sync.Mutex
 	sessions map[string]session
-	fails    map[string][]time.Time
+	lim      limiter
 }
 
 type session struct {
@@ -51,7 +50,7 @@ type session struct {
 
 // New builds the handler.
 func New(o *ops.Service) http.Handler {
-	u := &UI{ops: o, api: o.Handler("/api/"), sessions: map[string]session{}, fails: map[string][]time.Time{}}
+	u := &UI{ops: o, api: o.Handler("/api/"), sessions: map[string]session{}}
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
@@ -110,28 +109,7 @@ func (u *UI) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
 		return
 	}
-	ip := r.RemoteAddr
-	if i := strings.LastIndex(ip, ":"); i > 0 {
-		ip = ip[:i]
-	}
-	u.mu.Lock()
-	var recent []time.Time
-	for _, t := range u.fails[ip] {
-		if time.Since(t) < 10*time.Minute {
-			recent = append(recent, t)
-		}
-	}
-	u.fails[ip] = recent
-	u.mu.Unlock()
-	if len(recent) >= 5 {
-		http.Error(w, `{"error":"too many attempts, wait 10 minutes"}`, http.StatusTooManyRequests)
-		return
-	}
-	if !u.ops.CheckAdmin(b.Username, b.Password) {
-		u.mu.Lock()
-		u.fails[ip] = append(u.fails[ip], time.Now())
-		u.mu.Unlock()
-		http.Error(w, `{"error":"wrong username or password"}`, http.StatusUnauthorized)
+	if !u.lim.check(w, r, func() bool { return u.ops.CheckAdmin(b.Username, b.Password) }) {
 		return
 	}
 	id := make([]byte, 32)

@@ -18,3 +18,6 @@ func DetectWAN() string { return "" }
 
 // IsPfSense is always false on Windows.
 func IsPfSense() bool { return false }
+
+// ReadCounters is not implemented here yet (traffic stats come from Linux edges).
+func ReadCounters() map[string][2]uint64 { return nil }

@@ -23,6 +23,7 @@
       <span class="brand">meshgate</span>
       <nav id="tabs">
         <button data-tab="overview" class="active">Nodes</button>
+        <button data-tab="traffic">Traffic</button>
         <button data-tab="forwards">Port forwards</button>
         <button data-tab="routes">HTTPS</button>
         <button data-tab="acls">Access rules</button>
@@ -85,6 +86,23 @@
         </div>
         <h2>Tokens</h2>
         <div class="table-wrap"><table id="tokens"></table></div>
+      </section>
+
+      <section id="tab-traffic" class="hidden">
+        <p class="hint">Live, refreshed every 3 seconds. Speeds are averaged over 5 seconds; totals count since meshgate
+          started on the server that measures them. Port forwards and access rules are measured on Linux servers.</p>
+        <h2>By target IP</h2>
+        <div class="table-wrap"><table id="traffic-ips"></table></div>
+        <h2 class="gap">Port forwards</h2>
+        <div class="table-wrap"><table id="traffic-forwards"></table></div>
+        <h2 class="gap">HTTPS routes</h2>
+        <div class="table-wrap"><table id="traffic-routes"></table></div>
+        <h2 class="gap">Recent HTTPS requests</h2>
+        <div class="table-wrap"><table id="traffic-recent"></table></div>
+        <h2 class="gap">Devices</h2>
+        <div class="table-wrap"><table id="traffic-devices"></table></div>
+        <h2 class="gap">Access rules</h2>
+        <div class="table-wrap"><table id="traffic-rules"></table></div>
       </section>
 
       <section id="tab-tools" class="hidden">

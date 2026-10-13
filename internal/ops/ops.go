@@ -22,6 +22,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/store"
+	"github.com/heresjohnny320/meshgate/internal/traffic"
 )
 
 // PeerRuntime is live data about one peer, provided by the agent.
@@ -49,6 +50,8 @@ type Service struct {
 	Store   *store.Store
 	SelfID  string
 	Runtime func() Runtime
+	// Traffic gathers live traffic from every server (nil: not available).
+	Traffic func() []traffic.Node
 }
 
 // Item wraps a record with its local-override flag.
@@ -261,6 +264,7 @@ type NodePatch struct {
 	Exit      *bool     `json:"exit,omitempty"`
 	ExitVia   *string   `json:"exit_via,omitempty"`
 	TestPort  *int      `json:"test_port,omitempty"`
+	AppAdmin  *bool     `json:"app_admin,omitempty"`
 }
 
 // UpdateNode edits a node.
@@ -303,6 +307,9 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.Exit != nil {
 		n.Exit = *p.Exit && n.Kind == model.NodeServer
+	}
+	if p.AppAdmin != nil {
+		n.AppAdminOff = !*p.AppAdmin
 	}
 	if p.TestPort != nil {
 		if v := *p.TestPort; v != 0 && (!validPort(v) || n.Kind != model.NodeServer) {
@@ -437,6 +444,12 @@ func (s *Service) SetAdmin(user, pass string) error {
 // dummyHash keeps failed logins for unknown users as slow as real ones.
 var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("meshgate-dummy"), bcrypt.DefaultCost)
 
+// AdminHash returns the stored password hash of an admin login.
+func (s *Service) AdminHash(user string) (string, bool) {
+	a, ok := store.Get[model.Admin](s.Store, model.Key(model.KindAdmin, user))
+	return a.PasswordHash, ok
+}
+
 // CheckAdmin verifies a web UI login.
 func (s *Service) CheckAdmin(user, pass string) bool {
 	a, ok := store.Get[model.Admin](s.Store, model.Key(model.KindAdmin, user))
@@ -465,6 +478,12 @@ func (s *Service) Handler(prefix string) http.Handler {
 		})
 	}
 	route("GET view", func(r *http.Request) (any, error) { return s.View(), nil })
+	route("GET traffic", func(r *http.Request) (any, error) {
+		if s.Traffic == nil {
+			return []traffic.Node{}, nil
+		}
+		return s.Traffic(), nil
+	})
 	route("POST diag", func(r *http.Request) (any, error) {
 		var c diag.Check
 		if err := decode(r, &c); err != nil {

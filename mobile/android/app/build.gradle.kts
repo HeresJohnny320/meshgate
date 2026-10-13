@@ -51,6 +51,16 @@ android {
     }
 }
 
+// The admin dashboard is the web UI's own files, bundled into the APK so the
+// app can manage the mesh through any server (see AdminScreen).
+val dashboardAssets = layout.buildDirectory.dir("generated/dashboard")
+val copyDashboard by tasks.registering(Copy::class) {
+    from(rootProject.file("../../internal/webui/static"))
+    into(dashboardAssets.map { it.dir("dashboard") })
+}
+android.sourceSets["main"].assets.srcDir(dashboardAssets)
+tasks.named("preBuild") { dependsOn(copyDashboard) }
+
 dependencies {
     // Built by `make android-core` (gomobile bind) from ../../core
     implementation(files("libs/meshcore.aar"))

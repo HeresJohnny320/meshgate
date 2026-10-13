@@ -50,6 +50,7 @@ type Input struct {
 
 // DNAT is one forward on an edge node.
 type DNAT struct {
+	ID       string // forward ID, names its traffic counters
 	Name     string
 	Protos   []string
 	Lo, Hi   int    // public port range (Lo == Hi for one port)
@@ -66,6 +67,7 @@ type Allow struct {
 	Dst     string   // destination prefix when !Self
 	Proto   string   // tcp, udp, icmp, any
 	Ports   []string // "443", "8000-8100"
+	Counter string   // nft counter object counting what it lets in (access rules)
 }
 
 // Plan is the OS-neutral rule set.
@@ -98,6 +100,21 @@ type Plan struct {
 	// Own are meshgate's own services over the mesh (sync, web UI).
 	Own      []Allow
 	Warnings []string
+}
+
+// CounterName is the nft counter object for a forward ("f", id, "in"/"out")
+// or an access rule ("a", id, "").
+func CounterName(kind, id, dir string) string {
+	clean := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, id)
+	if dir != "" {
+		return kind + "_" + clean + "_" + dir
+	}
+	return kind + "_" + clean
 }
 
 // PrivateNets are never reachable through an exit node: exit traffic is
@@ -149,7 +166,7 @@ func Build(in Input) Plan {
 				continue
 			}
 			lo, hi := f.Ports()
-			d := DNAT{Name: f.Name, Protos: protos(f.Proto), Lo: lo, Hi: hi, Dst: dst, DstPort: f.TargetPort, Preserve: f.PreserveClientIP}
+			d := DNAT{ID: f.ID, Name: f.Name, Protos: protos(f.Proto), Lo: lo, Hi: hi, Dst: dst, DstPort: f.TargetPort, Preserve: f.PreserveClientIP}
 			if hi > lo {
 				d.DstPort = 0
 			}
@@ -259,7 +276,7 @@ func Build(in Input) Plan {
 			p.Warnings = append(p.Warnings, fmt.Sprintf("rule %s skipped: none of its devices exist", a.Name))
 			continue
 		}
-		al := Allow{Comment: "rule " + a.Name, Src: src, Proto: a.Proto, Ports: a.PortList()}
+		al := Allow{Comment: "rule " + a.Name, Src: src, Proto: a.Proto, Ports: a.PortList(), Counter: CounterName("a", a.ID, "")}
 		if d, ok := a.DestPrefix(); ok {
 			al.Dst = d.String()
 		} else {

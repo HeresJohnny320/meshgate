@@ -7,6 +7,9 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import android.view.ViewGroup
+import android.annotation.SuppressLint
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -145,18 +148,17 @@ fun ColumnScope.App() {
             delay(2000)
         }
     }
-    var adminUrl by remember { mutableStateOf<String?>(null) }
+    var admin by remember { mutableStateOf(false) }
     var tests by remember { mutableStateOf(false) }
-    val url = adminUrl
     when {
         !status.joined -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
             JoinScreen { status = parseStatus(Mesh.engine.statusJSON()) }
         }
         // The dashboard gets the whole width; it has its own phone layout.
-        url != null -> AdminScreen(url) { adminUrl = null }
+        admin -> AdminScreen { admin = false }
         tests -> TestsScreen(status) { tests = false }
         else -> Column(Modifier.fillMaxSize().padding(16.dp)) {
-            StatusScreen(status, onAdmin = { adminUrl = it }, onTests = { tests = true }) { status = parseStatus(Mesh.engine.statusJSON()) }
+            StatusScreen(status, onAdmin = { admin = true }, onTests = { tests = true }) { status = parseStatus(Mesh.engine.statusJSON()) }
         }
     }
 }
@@ -205,7 +207,7 @@ fun ColumnScope.JoinScreen(onJoined: () -> Unit) {
 }
 
 @Composable
-fun ColumnScope.StatusScreen(s: Status, onAdmin: (String) -> Unit, onTests: () -> Unit, onChange: () -> Unit) {
+fun ColumnScope.StatusScreen(s: Status, onAdmin: () -> Unit, onTests: () -> Unit, onChange: () -> Unit) {
     val activity = androidx.compose.ui.platform.LocalContext.current as Activity
     val startVpn = {
         activity.startForegroundService(Intent(activity, MeshVpnService::class.java))
@@ -224,28 +226,21 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: (String) -> Unit, onTests: () -
                 activity.startService(Intent(activity, MeshVpnService::class.java).setAction(MeshVpnService.ACTION_STOP))
             }
         } }
-        // Full mesh management from the phone: the web UI through the tunnel,
-        // behind its admin login. Always shown, so it says what is missing.
+        // Full mesh management from the phone: the dashboard is bundled in the
+        // app and works through any server, so one being down does not matter.
         item {
             ElevatedCard(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Admin", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        when {
-                            s.admin.isEmpty() -> "No node in this mesh hosts the web UI yet. On pfSense run `meshgate pfsense install`, " +
-                                "or on a server `meshgate webui enable`."
-                            !s.running -> "Turn the tunnel on to manage the mesh."
-                            else -> "Devices, port forwards, exit nodes and rules. Sign in with the admin login."
-                        },
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    s.admin.forEach { link ->
-                        Spacer(Modifier.height(12.dp))
-                        FilledTonalButton(onClick = { onAdmin(link.url) }, enabled = s.running, modifier = Modifier.fillMaxWidth()) {
-                            Text("Open admin · ${link.name}")
-                        }
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Admin", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (s.running) "Devices, port forwards, exit nodes and rules. Works through any of your servers."
+                            else "Turn the tunnel on to manage the mesh.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
+                    Spacer(Modifier.width(12.dp))
+                    FilledTonalButton(onClick = onAdmin, enabled = s.running) { Text("Open") }
                 }
             }
         }
@@ -371,11 +366,19 @@ fun handshakeText(unix: Long): String {
     }
 }
 
-/** The mesh web UI inside the app. Requires the web UI's admin login. */
+/**
+ * The admin dashboard, bundled in the APK. Its requests go through
+ * MeshgateApp.request to the Go engine, which sends them to whichever server
+ * answers (pfSense, the VPS, ...) with one admin login, so managing the mesh
+ * keeps working while a server is down.
+ */
+@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
+fun ColumnScope.AdminScreen(onClose: () -> Unit) {
     var web by remember { mutableStateOf<WebView?>(null) }
+    var server by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
     BackHandler {
         val w = web
         if (w != null && w.canGoBack()) w.goBack() else onClose()
@@ -384,8 +387,8 @@ fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
         title = {
             Column {
                 Text("Admin", style = MaterialTheme.typography.titleMedium)
-                Text(android.net.Uri.parse(url).host ?: url, style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (server.isEmpty()) "connecting…" else "via $server", style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         },
         navigationIcon = {
@@ -404,8 +407,25 @@ fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
                 layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
-                webViewClient = WebViewClient()
-                loadUrl(url)
+                val view = this
+                addJavascriptInterface(object {
+                    @JavascriptInterface
+                    fun request(id: Int, method: String, path: String, body: String) {
+                        scope.launch {
+                            val reply = JSONObject(withContext(Dispatchers.IO) { Mesh.engine.admin(method, path, body) })
+                            reply.optString("server").takeIf { it.isNotEmpty() }?.let { server = it }
+                            view.evaluateJavascript(
+                                "window.__meshgateReply($id, ${reply.optInt("status")}, ${JSONObject.quote(reply.optString("body"))})", null,
+                            )
+                        }
+                    }
+                }, "MeshgateApp")
+                // Only the bundled dashboard may run here (it has the bridge).
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest) =
+                        !r.url.toString().startsWith("file:///android_asset/dashboard/")
+                }
+                loadUrl("file:///android_asset/dashboard/index.html")
                 web = this
             }
         },

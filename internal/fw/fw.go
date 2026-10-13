@@ -3,6 +3,7 @@ package fw
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -10,7 +11,8 @@ import (
 // "inet meshgate" table atomically.
 func RenderNFT(p Plan) string {
 	q := func(s string) string { return `"` + s + `"` }
-	var dnat, post, mark, in, fwd, block []string
+	var dnat, post, mark, in, fwd, block, counters []string
+	fwdChain := []string{fmt.Sprintf("\t\toifname %s tcp flags syn tcp option maxseg size set rt mtu", q(p.Iface))}
 
 	for _, d := range p.Blocked {
 		port := fmt.Sprint(d.Lo)
@@ -33,6 +35,15 @@ func RenderNFT(p Plan) string {
 		keep := ""
 		if d.Preserve {
 			keep = fmt.Sprintf("ct mark set 0x%x ", MarkEdgeKeep)
+		}
+		// Traffic per forward, both directions of its connections.
+		cin, cout := CounterName("f", d.ID, "in"), CounterName("f", d.ID, "out")
+		counters = append(counters, cin, cout)
+		for _, proto := range d.Protos {
+			for _, c := range [][2]string{{"original", cin}, {"reply", cout}} {
+				fwdChain = append(fwdChain, fmt.Sprintf("\t\tmeta l4proto %s ct status dnat ct original proto-dst %s ct direction %s counter name %s",
+					proto, port, c[0], q(c[1])))
+			}
 		}
 		for _, proto := range d.Protos {
 			// Only traffic addressed to this host: never hijack connections
@@ -79,6 +90,9 @@ func RenderNFT(p Plan) string {
 				q(p.Iface), q(p.Iface), strings.Join(p.ExitClients, ", "), strings.Join(PrivateNets, ", "), q("exit node: internet only")))
 		}
 		for _, a := range p.Allow {
+			if a.Counter != "" {
+				counters = append(counters, a.Counter)
+			}
 			r := nftAllow(p.Iface, a)
 			if a.Self {
 				in = append(in, r)
@@ -92,6 +106,12 @@ func RenderNFT(p Plan) string {
 
 	var b bytes.Buffer
 	b.WriteString("table inet meshgate\ndelete table inet meshgate\ntable inet meshgate {\n")
+	sort.Strings(counters)
+	for i, c := range counters {
+		if i == 0 || counters[i-1] != c {
+			fmt.Fprintf(&b, "\tcounter %s {\n\t}\n", c)
+		}
+	}
 	chain := func(name, hook string, lines []string) {
 		fmt.Fprintf(&b, "\tchain %s {\n\t\t%s; policy accept;\n", name, hook)
 		for _, l := range lines {
@@ -104,8 +124,7 @@ func RenderNFT(p Plan) string {
 	}
 	chain("prerouting", "type nat hook prerouting priority dstnat", dnat)
 	chain("postrouting", "type nat hook postrouting priority srcnat", post)
-	chain("forward", "type filter hook forward priority mangle",
-		[]string{fmt.Sprintf("\t\toifname %s tcp flags syn tcp option maxseg size set rt mtu", q(p.Iface))})
+	chain("forward", "type filter hook forward priority mangle", fwdChain)
 	if len(mark) > 0 {
 		chain("premark", "type filter hook prerouting priority mangle", mark)
 		chain("outmark", "type route hook output priority mangle",
@@ -133,6 +152,9 @@ func nftAllow(iface string, a Allow) string {
 	}
 	if len(a.Ports) > 0 && (a.Proto == "tcp" || a.Proto == "udp") {
 		parts = append(parts, "th dport { "+strings.Join(a.Ports, ", ")+" }")
+	}
+	if a.Counter != "" {
+		parts = append(parts, fmt.Sprintf(`counter name "%s"`, a.Counter))
 	}
 	parts = append(parts, "accept", fmt.Sprintf(`comment "%s"`, sanitize(a.Comment)))
 	return "\t\t" + strings.Join(parts, " ")

@@ -132,6 +132,7 @@ func main() {
 	name := flag.String("name", "phone", "device name")
 	statusFile := flag.String("status", "", "write StatusJSON here every second")
 	myIP := flag.String("myip-url", "", "URL answering with the caller's IP (the app's \"My public IP\" test)")
+	cmdFile := flag.String("cmd", "", `file of app dashboard requests to run, one "METHOD PATH [JSON]" per line (read and removed every second)`)
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 
@@ -170,10 +171,41 @@ func main() {
 			e.Stop()
 			return
 		case <-t.C:
+			if *cmdFile != "" {
+				if b, err := os.ReadFile(*cmdFile); err == nil {
+					os.Remove(*cmdFile)
+					go runAdmin(e, string(b))
+				}
+			}
 			if *statusFile != "" {
 				os.WriteFile(*statusFile+".tmp", []byte(e.StatusJSON()), 0o644)
 				os.Rename(*statusFile+".tmp", *statusFile)
 			}
 		}
+	}
+}
+
+// runAdmin replays dashboard requests the way the app's Admin screen sends
+// them, logging each reply.
+func runAdmin(e *meshcore.Engine, lines string) {
+	for _, l := range strings.Split(strings.TrimSpace(lines), "\n") {
+		f := strings.SplitN(strings.TrimSpace(l), " ", 3)
+		if len(f) < 2 {
+			continue
+		}
+		body := ""
+		if len(f) == 3 {
+			body = f[2]
+		}
+		var r struct {
+			Status int
+			Body   string
+			Server string
+		}
+		json.Unmarshal([]byte(e.Admin(f[0], f[1], body)), &r)
+		if len(r.Body) > 200 {
+			r.Body = r.Body[:200] + "…"
+		}
+		log.Printf("admin %s %s: status=%d server=%s %s", f[0], f[1], r.Status, r.Server, r.Body)
 	}
 }

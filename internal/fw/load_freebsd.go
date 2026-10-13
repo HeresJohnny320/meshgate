@@ -116,3 +116,6 @@ func DetectWAN() string {
 	}
 	return ""
 }
+
+// ReadCounters is not implemented here yet (traffic stats come from Linux edges).
+func ReadCounters() map[string][2]uint64 { return nil }

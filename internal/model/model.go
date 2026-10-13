@@ -89,6 +89,10 @@ type Node struct {
 	// ExitVia is the exit node this device uses for internet traffic while
 	// it is away from home ("" = its own connection).
 	ExitVia string `json:"exit_via,omitempty"`
+	// AppAdminOff stops this server from answering the phone app's
+	// management requests (by default every server does, so the app keeps
+	// working when one is down).
+	AppAdminOff bool `json:"app_admin_off,omitempty"`
 	// TestPort runs meshgate's test service on this TCP+UDP port (0 = off).
 	TestPort int `json:"test_port,omitempty"`
 	// JoinAddr/JoinFP let other devices join through this node.
