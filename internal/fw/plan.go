@@ -276,13 +276,19 @@ func Build(in Input) Plan {
 			p.Warnings = append(p.Warnings, fmt.Sprintf("rule %s skipped: none of its devices exist", a.Name))
 			continue
 		}
-		al := Allow{Comment: "rule " + a.Name, Src: src, Proto: a.Proto, Ports: a.PortList(), Counter: CounterName("a", a.ID, "")}
-		if d, ok := a.DestPrefix(); ok {
-			al.Dst = d.String()
-		} else {
-			al.Self = true
+		protos := []string{a.Proto}
+		if a.Proto == "both" { // one rule each, counted together
+			protos = []string{"tcp", "udp"}
 		}
-		p.Allow = append(p.Allow, al)
+		for _, pr := range protos {
+			al := Allow{Comment: "rule " + a.Name, Src: src, Proto: pr, Ports: a.PortList(), Counter: CounterName("a", a.ID, "")}
+			if d, ok := a.DestPrefix(); ok {
+				al.Dst = d.String()
+			} else {
+				al.Self = true
+			}
+			p.Allow = append(p.Allow, al)
+		}
 	}
 	if !p.Restricted {
 		// Open policy: nothing to enforce; keep only what pf needs.

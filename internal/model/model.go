@@ -299,7 +299,7 @@ type ACL struct {
 	// To is a host IP, a CIDR (e.g. a VLAN subnet) or "self" for the node
 	// itself.
 	To    string `json:"to"`
-	Proto string `json:"proto"` // tcp, udp, icmp or any
+	Proto string `json:"proto"` // tcp, udp, both (tcp+udp), icmp or any
 	// Ports is "", "443", "8000-8100" or "80,443" (tcp/udp only).
 	Ports   string `json:"ports,omitempty"`
 	Enabled bool   `json:"enabled"`
@@ -325,9 +325,9 @@ func (a ACL) Validate() error {
 		return fmt.Errorf("pick the node that enforces the rule")
 	}
 	switch a.Proto {
-	case "tcp", "udp", "icmp", "any":
+	case "tcp", "udp", "both", "icmp", "any":
 	default:
-		return fmt.Errorf("protocol must be tcp, udp, icmp or any")
+		return fmt.Errorf("protocol must be tcp, udp, both, icmp or any")
 	}
 	if a.To != ToSelf {
 		if _, err := netip.ParsePrefix(a.To); err != nil {
@@ -337,8 +337,8 @@ func (a ACL) Validate() error {
 		}
 	}
 	ports := a.PortList()
-	if len(ports) > 0 && a.Proto != "tcp" && a.Proto != "udp" {
-		return fmt.Errorf("ports need protocol tcp or udp")
+	if len(ports) > 0 && a.Proto != "tcp" && a.Proto != "udp" && a.Proto != "both" {
+		return fmt.Errorf("ports need protocol tcp, udp or both")
 	}
 	for _, p := range ports {
 		lo, hi, isRange := strings.Cut(p, "-")

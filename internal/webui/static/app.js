@@ -317,7 +317,7 @@ function renderACLs() {
       : enforcing?.lan_policy === "firewall" ? ' <span class="chip" title="This node uses its pfSense firewall rules instead">pfSense rules</span>'
       : ' <span class="chip" title="This node\'s LAN policy is open, so the rule has no effect yet">policy open</span>';
     return `<tr><td><b>${esc(a.name)}</b>${localChip(it)}</td><td>${esc(nodeName(a.node))}${policy}</td><td>${esc(from)}</td>
-      <td class="mono">${esc(aclTarget(a))}</td><td>${esc(a.proto)}${a.ports ? " " + esc(a.ports) : ""}</td>
+      <td class="mono">${esc(aclTarget(a))}</td><td>${a.proto === "both" ? "tcp+udp" : esc(a.proto)}${a.ports ? " " + esc(a.ports) : ""}</td>
       <td>${a.enabled ? "on" : '<span class="chip">off</span>'}</td>
       <td class="actions"><button class="small" data-toggle="acl:${esc(a.id)}:${a.enabled ? 0 : 1}">${a.enabled ? "Disable" : "Enable"}</button>
       <button class="small" data-edit-acl="${esc(a.id)}">Edit</button>
@@ -344,7 +344,8 @@ function aclDialog(it) {
       ${devices.map((d) => `<label class="inline"><input type="checkbox" name="from" value="${esc(d.id)}" ${(a.from || []).includes(d.id) ? "checked" : ""}> ${esc(d.name)} <span class="mono">${esc(d.mesh_ip)}</span></label>`).join("")}</div>
     <label>To <select name="to_pick" id="acl-to">${targets(a.node)}</select></label>
     <label>Host IP or subnet <input name="to_custom" id="acl-custom" placeholder="192.168.20.15 or 192.168.30.0/24"></label>
-    <label>Protocol <select name="proto">${["tcp", "udp", "icmp", "any"].map((p) => `<option ${p === a.proto ? "selected" : ""}>${p}</option>`).join("")}</select></label>
+    <label>Protocol <select name="proto">${[["tcp", "tcp"], ["udp", "udp"], ["both", "tcp + udp"], ["icmp", "icmp (ping)"], ["any", "any"]]
+      .map(([v, l]) => `<option value="${v}" ${v === a.proto ? "selected" : ""}>${l}</option>`).join("")}</select></label>
     <label>Ports (tcp/udp; empty = all) <input name="ports" value="${esc(a.ports)}" placeholder="443 or 80,443 or 8000-8100"></label>
     <label class="inline full"><input type="checkbox" name="enabled" ${a.enabled ? "checked" : ""}> Enabled</label>
     ${scopeField(it?.local)}</div>`,

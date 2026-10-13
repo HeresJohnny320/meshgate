@@ -327,7 +327,7 @@ your home server through the mesh. Needs TCP 80 and 443 open on the VPS.
   can allow single devices.
 - **Linux home server:** web UI → **Nodes** → **Edit** → *LAN policy:
   Restricted* (TUI: `1`, `e`). Then add **Access rules**: from which devices,
-  to which host / subnet / VLAN / this node, which protocol and ports.
+  to which host / subnet / VLAN / this node, which protocol (tcp, udp, tcp + udp, icmp or any) and ports.
 
 | From | To | Allow | Effect |
 |---|---|---|---|

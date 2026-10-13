@@ -280,7 +280,7 @@ func (m *model_) card(i, width int) string {
 			from = strings.Join(names, ", ")
 		}
 		l2 = labelStyle.Render("FROM ") + selectedStyle.Render(from) + mutedStyle.Render("   ->   TO ") + addressStyle.Render(m.aclTarget(a)) + labelStyle.Render("   ON ") + publicStyle.Render(m.name(a.Node))
-		allow := strings.ToUpper(a.Proto)
+		allow := strings.ToUpper(protoLabel(a.Proto))
 		if a.Ports != "" {
 			allow += " " + a.Ports
 		}
@@ -327,7 +327,7 @@ func (m *model_) row(i, width int) string {
 		text = onOff(r.Enabled, "ON ", "OFF") + " " + selectedStyle.Render(r.Hostname) + mutedStyle.Render(" -> ") + addressStyle.Render(m.name(r.TargetNode)) + ":" + portStyle.Render(fmt.Sprint(r.TargetPort))
 	case tabRules:
 		a := m.v.ACLs[i].Value
-		text = onOff(a.Enabled, "ON ", "OFF") + " " + labelOr(a.Name) + mutedStyle.Render(" -> ") + addressStyle.Render(m.aclTarget(a)) + " " + protocolStyle.Render(a.Proto+" "+a.Ports)
+		text = onOff(a.Enabled, "ON ", "OFF") + " " + labelOr(a.Name) + mutedStyle.Render(" -> ") + addressStyle.Render(m.aclTarget(a)) + " " + protocolStyle.Render(protoLabel(a.Proto)+" "+a.Ports)
 	case tabDevices:
 		t := m.v.Tokens[i]
 		text = mutedStyle.Render("#"+t.ID) + " " + string(t.Kind) + " " + t.Note
@@ -516,4 +516,12 @@ func fitScreen(view string, width, height int) string {
 		ls = ls[:height]
 	}
 	return strings.Join(ls, "\n")
+}
+
+// protoLabel shows an access rule's protocol ("both" is tcp+udp).
+func protoLabel(p string) string {
+	if p == "both" {
+		return "tcp+udp"
+	}
+	return p
 }

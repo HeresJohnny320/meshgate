@@ -348,3 +348,30 @@ func TestForwardCounters(t *testing.T) {
 	}
 	nftCheck(t, s)
 }
+
+func TestRuleTCPAndUDP(t *testing.T) {
+	h := home
+	h.LANPolicy = model.PolicyRestricted
+	i := in(h)
+	i.ACLs = []model.ACL{{ID: "g", Name: "game", Node: "home", From: []string{"laptop"}, To: "192.168.1.205", Proto: "both", Ports: "27015-27030", Enabled: true}}
+	if err := i.ACLs[0].Validate(); err != nil {
+		t.Fatal(err)
+	}
+	s := RenderNFT(Build(i))
+	for _, pr := range []string{"tcp", "udp"} {
+		want := `ip saddr { 100.88.0.5 } ip daddr 192.168.1.205/32 meta l4proto ` + pr + ` th dport { 27015-27030 } counter name "a_g" accept`
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in\n%s", want, s)
+		}
+	}
+	if strings.Count(s, "counter a_g {") != 1 {
+		t.Errorf("counter object not declared exactly once:\n%s", s)
+	}
+	nftCheck(t, s)
+	_, _, filter := RenderPF(Build(i))
+	for _, pr := range []string{"tcp", "udp"} {
+		if !strings.Contains(filter, "inet proto "+pr+" from { 100.88.0.5 } to 192.168.1.205/32 port { 27015:27030 }") {
+			t.Errorf("pf missing %s rule:\n%s", pr, filter)
+		}
+	}
+}

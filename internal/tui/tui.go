@@ -527,7 +527,7 @@ func (m *model_) aclForm(it *ops.Item[model.ACL]) {
 		choice("node", "Enforced on", m.serverOptions(), a.Node).
 		text("from", "From devices (empty = any)", strings.Join(from, ", "), "laptop, phone").
 		text("to", "To", a.To, hint).
-		choice("proto", "Protocol", []option{{"tcp", "tcp"}, {"udp", "udp"}, {"icmp", "icmp"}, {"any", "any"}}, a.Proto).
+		choice("proto", "Protocol", []option{{"tcp", "tcp"}, {"udp", "udp"}, {"tcp+udp", "both"}, {"icmp", "icmp"}, {"any", "any"}}, a.Proto).
 		text("ports", "Ports (empty = all)", a.Ports, "443 or 80,443 or 8000-8100").
 		toggle("enabled", "Enabled", a.Enabled).
 		choice("scope", "Apply to", scopeOptions(m.name(m.v.SelfID)), scopeOf(local)).init()
