@@ -33,7 +33,6 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/heresjohnny320/meshgate/internal/fw"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/meshcfg"
 	"github.com/heresjohnny320/meshgate/internal/model"
@@ -73,6 +72,9 @@ type TunnelSettings struct {
 	// leave through the exit too, not through the local network).
 	DNS []string `json:"dns,omitempty"`
 }
+
+// wgMark is set on platforms where WireGuard's sockets may be marked.
+var wgMark uint32
 
 // exitDNS are the resolvers used through an exit node.
 var exitDNS = []string{"1.1.1.1", "9.9.9.9"}
@@ -512,10 +514,13 @@ func (e *Engine) newDevice(fd int32) error {
 		dev.Close()
 		return err
 	}
-	// Where sockets can be marked (Linux, phonesim), keep WireGuard's own
-	// traffic out of a tunnel that carries everything. Android refuses the
-	// mark and uses Protect below instead.
-	dev.IpcSet(fmt.Sprintf("fwmark=%d\n", fw.MarkBypass))
+	// Desktop Linux (phonesim) keeps WireGuard's own traffic out of a tunnel
+	// that carries everything by marking its sockets. Never on Android: it
+	// refuses the mark (EPERM), which then breaks every bind; Protect below
+	// does that job there.
+	if wgMark != 0 {
+		dev.IpcSet(fmt.Sprintf("fwmark=%d\n", wgMark))
+	}
 	if err := dev.Up(); err != nil {
 		dev.Close()
 		return err
