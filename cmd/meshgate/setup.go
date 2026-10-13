@@ -157,7 +157,7 @@ func addMachineFlags(fs *flag.FlagSet) *machineFlags {
 		port:      fs.Int("port", model.DefaultWGPort, "WireGuard UDP port (probes use port+2)"),
 		dataDir:   fs.String("data-dir", config.DefaultData, "state directory"),
 		userspace: fs.Bool("userspace", false, "always use built-in wireguard-go"),
-		lanPolicy: fs.String("lan-policy", "", "open | restricted: who may reach shared subnets (default: restricted on pfSense/FreeBSD, open on Linux)"),
+		lanPolicy: fs.String("lan-policy", "", "open | restricted | firewall: who may reach shared subnets (default: restricted on pfSense/FreeBSD, open on Linux)"),
 		webPort:   fs.Int("web-port", model.DefaultWebPort, "web UI TCP port"),
 		yes:       fs.Bool("y", false, "do not ask questions; use flags and defaults"),
 	}
