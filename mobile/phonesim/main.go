@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/heresjohnny320/meshgate/internal/diag"
 	meshcore "github.com/heresjohnny320/meshgate/mobile/core"
 )
 
@@ -130,6 +131,7 @@ func main() {
 	tok := flag.String("join", "", "join token (first run)")
 	name := flag.String("name", "phone", "device name")
 	statusFile := flag.String("status", "", "write StatusJSON here every second")
+	myIP := flag.String("myip-url", "", "URL answering with the caller's IP (the app's \"My public IP\" test)")
 	flag.Parse()
 	log.SetFlags(log.Ltime)
 
@@ -148,7 +150,10 @@ func main() {
 		log.Fatalf("start: %v", err)
 	}
 	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGUSR1, syscall.SIGINT, syscall.SIGTERM)
+	if *myIP != "" {
+		diag.MyIPURL = *myIP
+	}
+	signal.Notify(sig, syscall.SIGUSR1, syscall.SIGUSR2, syscall.SIGINT, syscall.SIGTERM)
 	t := time.NewTicker(time.Second)
 	for {
 		select {
@@ -156,6 +161,10 @@ func main() {
 			if s == syscall.SIGUSR1 {
 				log.Print("network changed")
 				e.NetworkChanged()
+				continue
+			}
+			if s == syscall.SIGUSR2 { // run the app's "My public IP" test
+				go func() { log.Printf("diag myip: %s", e.Diag("myip", "", 0)) }()
 				continue
 			}
 			e.Stop()

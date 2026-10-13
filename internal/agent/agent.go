@@ -23,6 +23,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/heresjohnny320/meshgate/internal/config"
+	"github.com/heresjohnny320/meshgate/internal/diag"
 	"github.com/heresjohnny320/meshgate/internal/fw"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/meshcfg"
@@ -59,6 +60,10 @@ type Agent struct {
 	warnings  []string
 	proxyErr  string
 	startedAt time.Time
+	// Test service (diag.Serve) currently running, and how to stop it.
+	testPort int
+	testStop context.CancelFunc
+	testErr  string
 }
 
 // New prepares an agent from the node config.
@@ -281,6 +286,7 @@ func (a *Agent) reconcile(ctx context.Context) {
 			ACLs: store.List[model.ACL](a.Store, model.KindACL), PreserveEdge: cfg.DefaultViaPeer,
 			WGPort: listen, ProbePort: listen + probe.Offset, MeshPort: a.Cfg.MeshPort,
 			JoinPort: joinPort(a.Cfg.JoinListen), WebPort: webPort(a.Cfg.WebListen), WANIface: fw.DetectWAN(),
+			TestPort: self.TestPort,
 		})
 		warn = append(warn, plan.Warnings...)
 		if runtime.GOOS == "windows" {
@@ -304,6 +310,10 @@ func (a *Agent) reconcile(ctx context.Context) {
 			}
 		}
 		a.updateProxy(ctx, netw, nodes)
+		a.updateTest(ctx, self)
+	}
+	if a.testErr != "" {
+		warn = append(warn, "test service: "+a.testErr)
 	}
 	if a.proxyErr != "" {
 		warn = append(warn, "https proxy: "+a.proxyErr)
@@ -387,6 +397,36 @@ func samePaths(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// updateTest starts, moves or stops the test service to match self.TestPort.
+// Called with a.mu held.
+func (a *Agent) updateTest(ctx context.Context, self model.Node) {
+	if self.TestPort == a.testPort {
+		return
+	}
+	if a.testStop != nil {
+		a.testStop()
+		a.testStop = nil
+	}
+	a.testPort, a.testErr = self.TestPort, ""
+	if self.TestPort == 0 {
+		return
+	}
+	tctx, stop := context.WithCancel(ctx)
+	a.testStop = stop
+	port, name := self.TestPort, self.Name
+	go func() {
+		log.Printf("test service on port %d (tcp+udp)", port)
+		if err := diag.Serve(tctx, port, name); err != nil {
+			log.Printf("test service: %v", err)
+			a.mu.Lock()
+			if a.testPort == port {
+				a.testErr = err.Error()
+			}
+			a.mu.Unlock()
+		}
+	}()
 }
 
 func (a *Agent) updateProxy(ctx context.Context, netw model.Network, nodes []model.Node) {

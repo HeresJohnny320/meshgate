@@ -280,6 +280,7 @@ refresh, `q` quit.
 | `meshgate token [--kind server] [--uses N] [--ttl 24h]` | join token (default: one phone/laptop, valid 24 h) |
 | `meshgate webui enable \| disable` | host the dashboard on this node, or stop |
 | `meshgate pfsense install \| remove` | pfSense GUI integration (VPN menu, MESHGATE rules tab) |
+| `meshgate diag myip \| ping \| trace \| tcp \| udp \| http …` | test connectivity from this node (see [Testing](#testing-that-everything-works)) |
 | `meshgate ports` | ports this node uses |
 | `meshgate leave` | remove meshgate's config from this machine |
 | `meshgate version` | version |
@@ -369,6 +370,38 @@ connection*.
   LANs or private networks.
 - All browsing then uses the VPS's bandwidth, and some sites challenge VPS IPs
   more often.
+
+### Testing that everything works
+
+meshgate has a small built-in test kit, so you can check each piece without
+setting up real services first.
+
+**Test service.** Web UI → **Nodes** → **Edit** on a server → *Test service
+port*, e.g. `8099` (TUI: `1`, `e`). That node now answers on TCP and UDP 8099
+and tells you which node answered and which address you came from. Turn it off
+again by clearing the field.
+
+- **Port forward:** forward a VPS port (TCP and UDP) to that node, port 8099,
+  then open `http://<VPS IP>:<port>` from outside, e.g. your phone on mobile
+  data with the tunnel off. With *show players' real IPs* on, it shows your
+  real address.
+- **HTTPS route:** point a route at that node, port 8099, and open
+  `https://<hostname>`. It shows the original client address the VPS passed on.
+
+**Checks.** Run them from the dashboard (**Tools** tab, runs on the node
+serving the page), the command line, or the phone (**Tests** in the app, runs on
+the phone through the tunnel):
+
+| Check | Command | Shows |
+|---|---|---|
+| My public IP | `meshgate diag myip` | the IP websites see; on the phone it also says whether that's your exit node |
+| Ping | `meshgate diag ping 100.88.x.y` | reachability and latency |
+| Traceroute | `meshgate diag trace 192.168.1.20` | the hops on the way (not on phones) |
+| TCP port | `meshgate diag tcp <host> 25565` | whether a port is open |
+| UDP | `meshgate diag udp <host> 8099` | an answer from a meshgate test service (UDP has no handshake) |
+| HTTP/HTTPS | `meshgate diag http https://jellyfin.example.com` | status, timing, certificate issuer and expiry |
+
+The phone's public-IP check uses `api.ipify.org`.
 
 ### Every change: all nodes or only this node
 

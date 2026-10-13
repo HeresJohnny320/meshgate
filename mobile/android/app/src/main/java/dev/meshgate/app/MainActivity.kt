@@ -15,6 +15,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -143,6 +146,7 @@ fun ColumnScope.App() {
         }
     }
     var adminUrl by remember { mutableStateOf<String?>(null) }
+    var tests by remember { mutableStateOf(false) }
     val url = adminUrl
     when {
         !status.joined -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -150,8 +154,9 @@ fun ColumnScope.App() {
         }
         // The dashboard gets the whole width; it has its own phone layout.
         url != null -> AdminScreen(url) { adminUrl = null }
+        tests -> TestsScreen(status) { tests = false }
         else -> Column(Modifier.fillMaxSize().padding(16.dp)) {
-            StatusScreen(status, onAdmin = { adminUrl = it }) { status = parseStatus(Mesh.engine.statusJSON()) }
+            StatusScreen(status, onAdmin = { adminUrl = it }, onTests = { tests = true }) { status = parseStatus(Mesh.engine.statusJSON()) }
         }
     }
 }
@@ -200,7 +205,7 @@ fun ColumnScope.JoinScreen(onJoined: () -> Unit) {
 }
 
 @Composable
-fun ColumnScope.StatusScreen(s: Status, onAdmin: (String) -> Unit, onChange: () -> Unit) {
+fun ColumnScope.StatusScreen(s: Status, onAdmin: (String) -> Unit, onTests: () -> Unit, onChange: () -> Unit) {
     val activity = androidx.compose.ui.platform.LocalContext.current as Activity
     val startVpn = {
         activity.startForegroundService(Intent(activity, MeshVpnService::class.java))
@@ -241,6 +246,19 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: (String) -> Unit, onChange: () 
                             Text("Open admin · ${link.name}")
                         }
                     }
+                }
+            }
+        }
+        item {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Tests", style = MaterialTheme.typography.titleMedium)
+                        Text("Public IP / exit node, ping, ports, HTTPS — from this phone.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    FilledTonalButton(onClick = onTests) { Text("Open") }
                 }
             }
         }
@@ -392,4 +410,93 @@ fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
             }
         },
     )
+}
+
+/** Checks run from the phone itself, through the VPN like any app. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ColumnScope.TestsScreen(s: Status, onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    val scope = rememberCoroutineScope()
+    val kinds = listOf("myip" to "My public IP", "ping" to "Ping", "tcp" to "TCP port", "udp" to "UDP", "http" to "HTTP(S)")
+    var kind by remember { mutableStateOf("myip") }
+    var target by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+
+    TopAppBar(
+        title = { Text("Tests") },
+        navigationIcon = {
+            IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+        },
+    )
+    LazyColumn(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                kinds.forEach { (k, label) ->
+                    FilterChip(selected = kind == k, onClick = { kind = k; result = null }, label = { Text(label) })
+                }
+            }
+        }
+        item {
+            Text(
+                when (kind) {
+                    "myip" -> if (s.exit.isNotEmpty()) "Shows the IP websites see. With exit node ${s.exit} on, it should be ${s.exit}'s IP."
+                        else "Shows the IP websites see from this phone right now."
+                    "ping" -> "Ping a mesh device, a LAN address at home (e.g. 192.168.1.20) or any host."
+                    "tcp" -> "Is a TCP port open? E.g. a port forward on your VPS, or a service at home."
+                    "udp" -> "Answers only from a meshgate test service (turn it on under Admin → Nodes → Edit)."
+                    else -> "Fetch a page; for HTTPS also shows the certificate and when it expires."
+                },
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (kind != "myip") {
+            item {
+                OutlinedTextField(target, { target = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    label = { Text(if (kind == "http") "Address (https://…)" else "Host or IP") })
+            }
+            if (kind != "http") item {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    s.peers.forEach { p ->
+                        AssistChip(onClick = { target = p.meshIp }, label = { Text(p.name) })
+                    }
+                }
+            }
+            if (kind == "tcp" || kind == "udp") item {
+                OutlinedTextField(port, { port = it.filter(Char::isDigit).take(5) }, singleLine = true, label = { Text("Port") },
+                    modifier = Modifier.fillMaxWidth())
+            }
+        }
+        item {
+            Button(
+                onClick = {
+                    busy = true
+                    result = null
+                    scope.launch {
+                        val json = withContext(Dispatchers.IO) { Mesh.engine.diag(kind, target.trim(), port.toLongOrNull() ?: 0L) }
+                        val o = JSONObject(json)
+                        result = o.optBoolean("ok") to o.optString("output")
+                        busy = false
+                    }
+                },
+                enabled = !busy && (kind == "myip" || target.isNotBlank()),
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (busy) "Running…" else "Run") }
+        }
+        result?.let { (ok, out) ->
+            item {
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (ok) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Text(out, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+                }
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
 }

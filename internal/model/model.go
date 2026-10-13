@@ -89,6 +89,8 @@ type Node struct {
 	// ExitVia is the exit node this device uses for internet traffic while
 	// it is away from home ("" = its own connection).
 	ExitVia string `json:"exit_via,omitempty"`
+	// TestPort runs meshgate's test service on this TCP+UDP port (0 = off).
+	TestPort int `json:"test_port,omitempty"`
 	// JoinAddr/JoinFP let other devices join through this node.
 	JoinAddr string `json:"join_addr,omitempty"`
 	JoinFP   string `json:"join_fp,omitempty"`

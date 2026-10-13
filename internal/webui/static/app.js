@@ -112,6 +112,7 @@ async function refresh() {
   if (cur) sel.value = cur;
   const nf = $("#network-form");
   if (document.activeElement?.form !== nf) nf.acme_email.value = view.network.acme_email || "";
+  renderTools();
   labelTables();
 }
 
@@ -142,6 +143,7 @@ function renderNodes(rt) {
       path = p.path === "direct" ? "direct" : p.path ? "via " + esc(nodeName(p.path.replace(/^via /, ""))) : "";
     }
     const roles = [n.kind, n.relay ? "relay" : "", n.exit ? "exit node" : "", n.webui ? "web ui" : "",
+      n.test_port ? "test :" + n.test_port : "",
       n.exit_via ? "internet via " + nodeName(n.exit_via) : ""].filter(Boolean).map((r) => `<span class="chip">${esc(r)}</span>`).join(" ");
     return `<tr>
       <td><b>${esc(n.name)}</b>${localChip(it)}</td><td>${roles}</td><td class="mono">${esc(n.mesh_ip)}</td>
@@ -337,6 +339,7 @@ function nodeDialog(it) {
        <label class="full">Shared LAN subnets (one per line) <textarea name="routes" rows="2">${esc((n.routes || []).join("\n"))}</textarea></label>
        <label class="inline full"><input type="checkbox" name="relay" ${n.relay ? "checked" : ""}> Relay (public endpoint reachable from anywhere)</label>
        <label class="inline full"><input type="checkbox" name="exit" ${n.exit ? "checked" : ""}> Exit node (devices you pick send their internet traffic out through this node)</label>
+       <label class="full">Test service port (TCP+UDP, empty = off; see Tools) <input name="test_port" type="number" min="1" max="65535" value="${n.test_port || ""}" placeholder="off"></label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
          <select name="lan_policy">
            <option value="open" ${!["restricted", "firewall"].includes(n.lan_policy) ? "selected" : ""}>Open: any mesh device</option>
@@ -350,7 +353,7 @@ function nodeDialog(it) {
       if (n.kind === "static") patch.via_relay = fd.get("via_relay");
       else if (n.kind === "client") patch.exit_via = fd.get("exit_via");
       else Object.assign(patch, { endpoints: lines("endpoints"), routes: lines("routes"), relay: fd.get("relay") === "on",
-        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy") });
+        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0 });
       await api("/api/node", { id: n.id, patch, scope: fd.get("scope") });
     });
 }
@@ -430,6 +433,35 @@ $("#static-form").addEventListener("submit", async (e) => {
     refresh();
   } catch (err) { toast(err.message); }
 });
+
+// Tools tab: checks run on the node serving the dashboard.
+function diagPortField() {
+  const k = $("#diag-form").kind.value;
+  $("#diag-port").classList.toggle("hidden", k !== "tcp" && k !== "udp");
+  $("#diag-target").classList.toggle("hidden", k === "myip");
+}
+$("#diag-form").kind.addEventListener("change", diagPortField);
+diagPortField();
+$("#diag-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, out = $("#diag-out"), btn = $("#diag-run");
+  btn.disabled = true; btn.textContent = "Running…";
+  out.classList.remove("hidden", "bad"); out.textContent = "Running…";
+  try {
+    const r = await api("/api/diag", { kind: f.kind.value, target: f.target.value.trim(), port: parseInt(f.port.value, 10) || 0 });
+    out.textContent = r.output; out.classList.toggle("bad", !r.ok);
+  } catch (err) { out.textContent = err.message; out.classList.add("bad"); }
+  btn.disabled = false; btn.textContent = "Run";
+});
+
+function renderTools() {
+  const self = view.nodes.find((n) => n.value.id === view.self_id)?.value;
+  if (self) $("#diag-from").textContent = `Runs from ${self.name} (${self.mesh_ip}), the node serving this page.`;
+  const on = servers().filter((n) => n.test_port);
+  $("#test-nodes").innerHTML = on.length
+    ? "<p><b>On now:</b> " + on.map((n) => `${esc(n.name)} → <code>${esc(n.mesh_ip)}:${n.test_port}</code>`).join(", ") + "</p>"
+    : '<p class="hint">Off on every node.</p>';
+}
 
 $("#network-form").addEventListener("submit", async (e) => {
   e.preventDefault();

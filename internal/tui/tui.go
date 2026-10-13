@@ -461,6 +461,8 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			patch["routes"] = lines(v["routes"])
 			patch["relay"] = v["relay"] == "true"
 			patch["exit"] = v["exit"] == "true"
+			tp, _ := strconv.Atoi(strings.TrimSpace(v["test_port"]))
+			patch["test_port"] = tp
 			patch["lan_policy"] = v["policy"]
 		}
 		return m.api.Post("node", map[string]any{"id": n.ID, "patch": patch, "scope": v["scope"]}, nil)
@@ -471,6 +473,7 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			text("routes", "Shared subnets (comma)", strings.Join(n.Routes, ", "), "192.168.1.0/24").
 			toggle("relay", "Relay (public endpoint)", n.Relay).
 			toggle("exit", "Exit node (devices may use it for internet)", n.Exit).
+			text("test_port", "Test service port (empty = off)", itoa0(n.TestPort), "8099").
 			choice("policy", "LAN policy", []option{{"open: any mesh device", model.PolicyOpen}, {"restricted: rules only", model.PolicyRestricted}, {"firewall: pfSense rules decide", model.PolicyFirewall}}, policyOf(n))
 	case model.NodeStatic:
 		f.choice("via", "Connects through relay", m.relayOptions(), n.ViaRelay)

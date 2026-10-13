@@ -41,6 +41,9 @@ type Input struct {
 	PreserveEdge string
 	// Ports meshgate itself serves on this node.
 	WGPort, ProbePort, MeshPort, JoinPort, WebPort int
+	// TestPort is the test service (TCP+UDP), reachable from the mesh even
+	// under a restricted or firewall policy while it is on.
+	TestPort int
 	// WANIface is the internet-facing interface (pf only).
 	WANIface string
 }
@@ -227,6 +230,11 @@ func Build(in Input) Plan {
 	if in.WebPort > 0 {
 		p.Own = append(p.Own, Allow{Comment: "meshgate web ui", Src: []string{in.Network.CIDR}, Self: true, Proto: "tcp", Ports: []string{fmt.Sprint(in.WebPort)}})
 	}
+	if in.TestPort > 0 {
+		for _, pr := range []string{"tcp", "udp"} {
+			p.Own = append(p.Own, Allow{Comment: "meshgate test service", Self: true, Proto: pr, Ports: []string{fmt.Sprint(in.TestPort)}})
+		}
+	}
 	p.Allow = append(p.Allow, p.Own...)
 
 	// User access rules enforced here.
@@ -300,13 +308,28 @@ func IfaceFor(pfx netip.Prefix) string {
 	return ""
 }
 
+// IsTunnel reports whether an interface is a VPN tunnel (another WireGuard,
+// OpenVPN, Tailscale, ...). Its addresses are not a LAN: sharing them or
+// publishing them as endpoints would run the mesh inside that VPN.
+func IsTunnel(name string, flags net.Flags) bool {
+	if flags&net.FlagPointToPoint != 0 {
+		return true
+	}
+	for _, p := range []string{"wg", "tun", "tap", "ovpn", "tailscale", "zt", "ppp", "ipsec", "gif", "gre"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // LocalLANs lists private IPv4 networks on this machine with their
 // interfaces (VLANs show up as their own interfaces).
 func LocalLANs(skip string) []model.LAN {
 	var out []model.LAN
 	ifs, _ := net.Interfaces()
 	for _, i := range ifs {
-		if i.Name == skip || i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 {
+		if i.Name == skip || i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 || IsTunnel(i.Name, i.Flags) {
 			continue
 		}
 		addrs, _ := i.Addrs()

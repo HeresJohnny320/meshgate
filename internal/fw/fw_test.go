@@ -1,6 +1,7 @@
 package fw
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -286,4 +287,49 @@ func TestExitNode(t *testing.T) {
 	if s := RenderNFT(Build(i)); strings.Contains(s, "exit node") {
 		t.Errorf("exit rules on a node that is not an exit:\n%s", s)
 	}
+}
+
+func TestIsTunnel(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		flags net.Flags
+		want  bool
+	}{
+		{"wg0", net.FlagUp, true},
+		{"tun_wg0", net.FlagUp, true}, // pfSense WireGuard package
+		{"ovpns1", net.FlagUp, true},
+		{"tailscale0", net.FlagUp, true},
+		{"myvpn", net.FlagUp | net.FlagPointToPoint, true},
+		{"eth0", net.FlagUp | net.FlagBroadcast, false},
+		{"igb1.20", net.FlagUp | net.FlagBroadcast, false},
+		{"br0", net.FlagUp | net.FlagBroadcast, false},
+	} {
+		if got := IsTunnel(c.name, c.flags); got != c.want {
+			t.Errorf("IsTunnel(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestTestServiceStaysReachable(t *testing.T) {
+	h := home
+	h.LANPolicy = model.PolicyFirewall
+	i := in(h)
+	i.TestPort = 8099
+	_, _, filter := RenderPF(Build(i))
+	for _, want := range []string{
+		"pass in quick on mg0 inet proto tcp from any to self port { 8099 } keep state # meshgate test service",
+		"pass in quick on mg0 inet proto udp from any to self port { 8099 } keep state # meshgate test service",
+	} {
+		if !strings.Contains(filter, want) {
+			t.Errorf("missing %q:\n%s", want, filter)
+		}
+	}
+	h.LANPolicy = model.PolicyRestricted
+	i = in(h)
+	i.TestPort = 8099
+	s := RenderNFT(Build(i))
+	if !strings.Contains(s, `meta l4proto udp th dport { 8099 } accept comment "meshgate test service"`) {
+		t.Errorf("restricted nft lacks test service:\n%s", s)
+	}
+	nftCheck(t, s)
 }

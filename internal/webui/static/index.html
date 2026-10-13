@@ -27,6 +27,7 @@
         <button data-tab="routes">HTTPS</button>
         <button data-tab="acls">Access rules</button>
         <button data-tab="devices">Add devices</button>
+        <button data-tab="tools">Tools</button>
         <button data-tab="settings">Settings</button>
       </nav>
       <button id="logout" class="ghost">Sign out</button>
@@ -84,6 +85,38 @@
         </div>
         <h2>Tokens</h2>
         <div class="table-wrap"><table id="tokens"></table></div>
+      </section>
+
+      <section id="tab-tools" class="hidden">
+        <div class="grid2">
+          <form id="diag-form" class="card">
+            <h2>Run a check</h2>
+            <p class="hint" id="diag-from">Runs from the node serving this page.</p>
+            <label>Check
+              <select name="kind">
+                <option value="ping">Ping</option>
+                <option value="myip">My public IP (what websites see)</option>
+                <option value="trace">Traceroute</option>
+                <option value="tcp">TCP port open?</option>
+                <option value="udp">UDP answer (meshgate test service)</option>
+                <option value="http">HTTP / HTTPS page</option>
+              </select></label>
+            <label id="diag-target">Target <input name="target" placeholder="100.88.x.y, 192.168.1.20, example.com or https://…"></label>
+            <label id="diag-port">Port <input name="port" type="number" min="1" max="65535" placeholder="8099"></label>
+            <button type="submit" id="diag-run">Run</button>
+          </form>
+          <div class="card">
+            <h2>Test service</h2>
+            <p class="hint">A tiny responder for testing paths end to end. Turn it on for a server under
+              <b>Nodes → Edit → Test service port</b> (e.g. 8099). It answers on TCP (open it in a browser or with
+              <code>curl</code>) and UDP, and tells you which node answered and which address you came from.</p>
+            <p class="hint">Test a <b>port forward</b>: forward a VPS port to that node and port, then open
+              <code>http://&lt;VPS IP&gt;:&lt;port&gt;</code> from outside (e.g. your phone on mobile data).
+              Test <b>HTTPS</b>: add an HTTPS route to it and open the hostname. Turn it off again when done.</p>
+            <div id="test-nodes"></div>
+          </div>
+        </div>
+        <pre id="diag-out" class="card out-pre hidden"></pre>
       </section>
 
       <section id="tab-settings" class="hidden">

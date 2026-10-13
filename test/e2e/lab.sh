@@ -117,6 +117,22 @@ echo "friend sees (masq): $OUT2"
 VPS_MESH=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([n["value"]["mesh_ip"] for n in v["nodes"] if n["value"]["id"]==v["self_id"]][0])')
 check "masqueraded forward shows vps mesh IP" "echo '$OUT2' | grep -q 'you are $VPS_MESH'"
 
+echo; echo "== test service and meshgate diag"
+api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"test_port\":8099},\"scope\":\"cluster\"}" >/dev/null
+api vps forward "{\"scope\":\"cluster\",\"forward\":{\"name\":\"test\",\"proto\":\"both\",\"edge_node\":\"$VPS_ID\",\"listen_port\":25570,\"target_node\":\"$HOME_ID\",\"target_port\":8099,\"enabled\":true}}" >/dev/null
+sleep 6
+OUT5=$(x fr curl -s -m5 http://203.0.113.10:25570/ || true)
+check "test service answers through a forward" "echo '$OUT5' | grep -q 'node:      home'"
+check "diag ping from vps to home" "mg vps diag ping $HOME_IP >/dev/null"
+check "diag traceroute from vps to home" "mg vps diag trace $HOME_IP | grep -q $HOME_IP"
+check "diag tcp from vps to the test service" "mg vps diag tcp $HOME_IP 8099 >/dev/null"
+check "diag http from vps shows the test service" "mg vps diag http http://$HOME_IP:8099/ | grep -q 'node:      home'"
+check "diag udp through the forward from laptop on LTE" "mg lap diag udp 203.0.113.10 25570 | grep -q 'on home'"
+check "diag reports a closed port as failed" "! mg vps diag tcp $HOME_IP 8098 >/dev/null 2>&1"
+api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"test_port\":0},\"scope\":\"cluster\"}" >/dev/null
+sleep 4
+check "test service stops when turned off" "! mg vps diag tcp $HOME_IP 8099 >/dev/null 2>&1"
+
 echo; echo "== local-only change on home (not replicated)"
 api home forward "{\"scope\":\"local\",\"forward\":{\"name\":\"local-only\",\"proto\":\"udp\",\"edge_node\":\"$VPS_ID\",\"listen_port\":3000,\"target_node\":\"$HOME_ID\",\"target_port\":3000,\"enabled\":true}}" >/dev/null
 api home forward "{\"scope\":\"cluster\",\"forward\":{\"name\":\"from-home\",\"proto\":\"udp\",\"edge_node\":\"$VPS_ID\",\"listen_port\":3001,\"target_node\":\"$HOME_ID\",\"target_port\":3001,\"enabled\":true}}" >/dev/null
@@ -158,7 +174,7 @@ start vps2
 
 echo "== phone (mobile engine) joins over LTE"
 PTOK=$(mg vps token --kind client | grep '^mg1\.')
-ip netns exec phone "$PHONESIM" -dir "$D/phone" -join "$PTOK" -name phone -status "$D/phone.json" > "$D/phone.log" 2>&1 &
+ip netns exec phone "$PHONESIM" -dir "$D/phone" -join "$PTOK" -name phone -status "$D/phone.json" -myip-url http://198.18.1.5:7001/ > "$D/phone.log" 2>&1 &
 echo $! > "$D/phone.pid"
 sleep 15
 pj() { python3 -c "import json,sys; s=json.load(open('$D/phone.json')); $1" 2>/dev/null || true; }
@@ -182,6 +198,14 @@ x inet ip link set $DOWN up
 
 echo; echo "== exit node: phone's internet traffic leaves through vps"
 ip netns exec fr python3 "$HERE/gameserver.py" 7000 > /dev/null 2>&1 & echo $! > "$D/whoami.pid"
+# Stand-in for api.ipify.org: answers with the caller's IP.
+ip netns exec fr python3 -c '
+import http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = self.client_address[0].encode(); self.send_response(200); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+http.server.HTTPServer(("0.0.0.0", 7001), H).serve_forever()' > /dev/null 2>&1 & echo $! > "$D/myip.pid"
 sleep 1
 myip() { x phone sh -c 'echo | nc -w3 198.18.1.5 7000' 2>/dev/null | sed -n 's/.*you are //p'; }
 check "without exit node the internet sees the phone's LTE IP" "test \"\$(myip)\" = 198.18.3.60"
@@ -194,6 +218,9 @@ check "phone uses vps as exit node" "test \"\$(pj \"print(s.get('exit',''))\")\"
 check "the internet sees the vps IP" "test \"\$(myip)\" = 203.0.113.10"
 check "phone DNS goes through the exit" "grep -q 'dns: \\[1.1.1.1' '$D/phone.log'"
 check "phone still reaches home LAN with exit node" "x phone ping -c2 -W2 192.168.1.10 >/dev/null"
+kill -USR2 "$(cat "$D/phone.pid")"; sleep 3
+grep "diag myip" "$D/phone.log" | tail -1
+check "app's public IP test confirms the exit node" "grep 'diag myip' '$D/phone.log' | tail -1 | grep -q 'leaves through the exit node'"
 
 echo; echo "== phone walks into home Wi-Fi"
 x phone ip link set wifi up

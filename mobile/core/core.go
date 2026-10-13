@@ -33,6 +33,7 @@ import (
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/heresjohnny320/meshgate/internal/diag"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/meshcfg"
 	"github.com/heresjohnny320/meshgate/internal/model"
@@ -614,6 +615,38 @@ type status struct {
 type adminLink struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
+}
+
+// Diag runs a check from the phone (kind: myip, ping, tcp, udp, http; see
+// package diag) and returns diag.Result as JSON. It blocks for up to a
+// minute, so call it off the UI thread. Its traffic goes through the VPN
+// like any app's, so "myip" shows whether an exit node is in use.
+func (e *Engine) Diag(kind, target string, port int) string {
+	r := diag.Run(context.Background(), diag.Check{Kind: kind, Target: target, Port: port})
+	if kind == "myip" && r.OK {
+		r.Output += e.exitVerdict(r.Output)
+	}
+	b, _ := json.Marshal(r)
+	return string(b)
+}
+
+// exitVerdict says whether a public-IP answer matches the exit node in use.
+func (e *Engine) exitVerdict(out string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.lastCfg == nil || e.lastCfg.ExitVia == "" || e.store == nil {
+		return "\nNo exit node in use: that is this phone's own network."
+	}
+	ex, ok := store.Get[model.Node](e.store, model.Key(model.KindNode, e.lastCfg.ExitVia))
+	if !ok {
+		return ""
+	}
+	for _, ep := range ex.Endpoints {
+		if host, _, err := net.SplitHostPort(ep); err == nil && strings.HasSuffix(strings.TrimSpace(out), " "+host) {
+			return "\nThat is " + ex.Name + ": your traffic leaves through the exit node."
+		}
+	}
+	return "\nExit node " + ex.Name + " is on, but that IP is not one of its addresses (its traffic may leave from another IP, or the exit is not working)."
 }
 
 // StatusJSON describes the current state for the app UI.

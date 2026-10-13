@@ -35,6 +35,7 @@ Usage:
   meshgate token [flags]        create a join token (--kind client|server)
   meshgate webui enable|disable host the web UI on this node (or stop)
   meshgate pfsense install|remove  VPN > meshgate page and Firewall > Rules > MESHGATE tab (pfSense)
+  meshgate diag ping|trace|tcp|udp|http <target> [port]  test connectivity from this node
   meshgate service install|uninstall  run at boot (Windows service; systemd/rc.d are set up by the installer)
   meshgate leave                stop and remove meshgate config from this machine
   meshgate version
@@ -75,6 +76,8 @@ func main() {
 		err = cmdWebUI(cfgPath, rest)
 	case "pfsense":
 		err = cmdPfSense(cfgPath, rest)
+	case "diag":
+		err = cmdDiag(cfgPath, rest)
 	case "service":
 		err = cmdService(cfgPath, rest)
 	case "ports":

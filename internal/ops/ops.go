@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/heresjohnny320/meshgate/internal/diag"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/store"
@@ -247,6 +248,8 @@ func (s *Service) Toggle(kind, id string, enabled bool) error {
 	return errors.New("only forwards, routes and rules can be toggled")
 }
 
+func validPort(p int) bool { return p > 0 && p < 65536 }
+
 // NodePatch is the editable part of a node.
 type NodePatch struct {
 	Name      *string   `json:"name,omitempty"`
@@ -257,6 +260,7 @@ type NodePatch struct {
 	LANPolicy *string   `json:"lan_policy,omitempty"`
 	Exit      *bool     `json:"exit,omitempty"`
 	ExitVia   *string   `json:"exit_via,omitempty"`
+	TestPort  *int      `json:"test_port,omitempty"`
 }
 
 // UpdateNode edits a node.
@@ -299,6 +303,12 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.Exit != nil {
 		n.Exit = *p.Exit && n.Kind == model.NodeServer
+	}
+	if p.TestPort != nil {
+		if v := *p.TestPort; v != 0 && (!validPort(v) || n.Kind != model.NodeServer) {
+			return n, errors.New("test service: server nodes only, port 1-65535")
+		}
+		n.TestPort = *p.TestPort
 	}
 	if p.ExitVia != nil {
 		if v := *p.ExitVia; v != "" {
@@ -455,6 +465,13 @@ func (s *Service) Handler(prefix string) http.Handler {
 		})
 	}
 	route("GET view", func(r *http.Request) (any, error) { return s.View(), nil })
+	route("POST diag", func(r *http.Request) (any, error) {
+		var c diag.Check
+		if err := decode(r, &c); err != nil {
+			return nil, err
+		}
+		return diag.Run(r.Context(), c), nil
+	})
 	route("POST forward", func(r *http.Request) (any, error) {
 		var b struct {
 			Forward model.Forward `json:"forward"`
