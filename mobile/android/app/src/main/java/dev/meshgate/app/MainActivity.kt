@@ -195,12 +195,25 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: (String) -> Unit, onChange: () 
     )
     if (s.error.isNotEmpty()) Text(s.error, color = MaterialTheme.colorScheme.error)
     // Full mesh management from the phone: the web UI through the tunnel,
-    // behind its admin login.
-    if (s.running) {
-        s.admin.forEach { link ->
-            Spacer(Modifier.height(8.dp))
-            Button(onClick = { onAdmin(link.url) }, modifier = Modifier.fillMaxWidth()) {
-                Text("Admin · ${link.name}")
+    // behind its admin login. Always shown, so it says what is missing.
+    Spacer(Modifier.height(12.dp))
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Admin", fontWeight = FontWeight.SemiBold)
+            Text(
+                when {
+                    s.admin.isEmpty() -> "No node in this mesh hosts the web UI yet. On pfSense run `meshgate pfsense install`, " +
+                        "or on a server `meshgate webui enable`."
+                    !s.running -> "Turn the tunnel on to manage the mesh."
+                    else -> "Sign in with the web UI admin login to manage devices, forwards and rules."
+                },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            s.admin.forEach { link ->
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = { onAdmin(link.url) }, enabled = s.running, modifier = Modifier.fillMaxWidth()) {
+                    Text("Open admin · ${link.name}")
+                }
             }
         }
     }

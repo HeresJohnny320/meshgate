@@ -11,6 +11,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/localapi"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/pfsense"
+	"github.com/heresjohnny320/meshgate/internal/ports"
 	"github.com/heresjohnny320/meshgate/internal/webui"
 )
 
@@ -46,18 +47,46 @@ func cmdPfSense(cfgPath string, args []string) error {
 	if cfg.Kind != "" && cfg.Kind != model.NodeServer {
 		return errors.New("only server nodes can be managed from pfSense")
 	}
+	if err := waitAgent(api); err != nil {
+		return err
+	}
+	changed := false
 	if cfg.Iface != pfsense.Iface {
-		fmt.Printf("Renaming the mesh interface %s -> %s and restarting meshgate...\n", cfg.Iface, pfsense.Iface)
-		cfg.Iface = pfsense.Iface
+		fmt.Printf("Renaming the mesh interface %s -> %s.\n", cfg.Iface, pfsense.Iface)
+		cfg.Iface, changed = pfsense.Iface, true
+	}
+	// meshgate's own web UI on the mesh IP (and localhost, never LAN/WAN):
+	// that is what the phone app's Admin button opens.
+	if len(cfg.WebListen) == 0 {
+		v, err := api.View()
+		if err != nil {
+			return err
+		}
+		var meshIP string
+		for _, n := range v.Nodes {
+			if n.Value.ID == v.SelfID {
+				meshIP = n.Value.MeshIP
+			}
+		}
+		port, ok := ports.TCP(model.DefaultWebPort, nil)
+		if meshIP == "" || !ok {
+			return errors.New("cannot pick an address for the web UI")
+		}
+		cfg.WebListen, changed = webListen(meshIP, port, false, true), true
+		fmt.Printf("Turning on the web UI for mesh devices (phone app Admin): http://%s:%d/\n", meshIP, port)
+	}
+	if changed {
 		if err := config.Save(cfgPath, cfg); err != nil {
 			return err
 		}
+		fmt.Println("Restarting meshgate...")
 		if err := restartService(); err != nil {
 			return fmt.Errorf("restart meshgate: %w", err)
 		}
-	}
-	if err := waitAgent(api); err != nil {
-		return err
+		time.Sleep(2 * time.Second) // let the old agent exit before polling
+		if err := waitAgent(api); err != nil {
+			return err
+		}
 	}
 	if err := pfsense.WriteFiles(webui.Static(), cfg.Socket, agent.Version); err != nil {
 		return err
@@ -75,6 +104,7 @@ func cmdPfSense(cfgPath string, args []string) error {
 The MESHGATE tab starts with one rule that allows everything. Replace it with
 rules for the hosts and ports you want, e.g. pass TCP to 192.168.1.20 port 443.
 `, pfsense.Iface, opt)
+
 	return nil
 }
 

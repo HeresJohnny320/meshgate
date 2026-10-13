@@ -116,6 +116,9 @@ It installs meshgate, joins the mesh and starts it, without asking anything:
 - Phones on your home Wi-Fi or a VLAN connect straight to pfSense.
 - **VPN → meshgate** shows the full dashboard inside the pfSense GUI, behind
   your pfSense login.
+- meshgate's own web UI is turned on for mesh devices only (pfSense's mesh IP
+  and localhost, not LAN or WAN), so the phone app's **Admin** button can open
+  it with the meshgate admin login.
 - **Firewall → Rules → MESHGATE** decides what mesh devices may reach. It
   starts with one rule that allows everything; replace it with rules for the
   hosts and ports you want (e.g. pass TCP to VM 1 port 443, pass TCP to VM 2
@@ -188,7 +191,8 @@ receive real client IPs: use Linux or pfSense for that.
 - Choosing the path is automatic: direct at home, nearest relay elsewhere.
 - **Admin** opens the full web UI through the mesh: forwards, rules, devices,
   everything. It needs the web UI admin login, so only admins can change
-  anything.
+  anything. If no node hosts the web UI yet, the Admin card says how to turn
+  it on.
 
 ## Access rules (lock down)
 
