@@ -569,7 +569,7 @@ func appendLANEndpoints(eps, routes []string, port int) []string {
 // leaves Linux servers open unless asked.
 func defaultPolicy(flag string) string {
 	switch flag {
-	case model.PolicyOpen, model.PolicyRestricted:
+	case model.PolicyOpen, model.PolicyRestricted, model.PolicyFirewall:
 		return flag
 	}
 	if runtime.GOOS == "freebsd" {

@@ -23,6 +23,12 @@ import (
 //go:embed static
 var static embed.FS
 
+// Static returns the dashboard's files (index.html, app.js, app.css).
+func Static() fs.FS {
+	sub, _ := fs.Sub(static, "static")
+	return sub
+}
+
 const (
 	cookieName = "meshgate_session"
 	sessionTTL = 12 * time.Hour
@@ -52,7 +58,7 @@ func New(o *ops.Service) http.Handler {
 	mux.HandleFunc("POST /auth/login", u.login)
 	mux.HandleFunc("POST /auth/logout", u.logout)
 	mux.HandleFunc("GET /auth/me", u.me)
-	mux.Handle("POST /api/qr", u.auth(http.HandlerFunc(qr)))
+	mux.Handle("POST /api/qr", u.auth(http.HandlerFunc(QR)))
 	mux.Handle("GET /api/", u.auth(u.api))
 	mux.Handle("POST /api/", u.auth(u.api))
 	return secure(mux)
@@ -158,7 +164,8 @@ func (u *UI) me(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"user": user, "ok": ok})
 }
 
-func qr(w http.ResponseWriter, r *http.Request) {
+// QR renders {"text": ...} as a PNG data URL for the join dialogs.
+func QR(w http.ResponseWriter, r *http.Request) {
 	var b struct{ Text string }
 	if err := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&b); err != nil || b.Text == "" {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)

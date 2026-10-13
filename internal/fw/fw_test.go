@@ -150,6 +150,35 @@ func TestPFRestrictedTarget(t *testing.T) {
 	}
 }
 
+func TestPFFirewallManaged(t *testing.T) {
+	h := home
+	h.LANPolicy = model.PolicyFirewall
+	i := in(h)
+	i.Iface = "tun_mg0"
+	i.PreserveEdge = "vps"
+	i.WANIface = "igb0"
+	p := Build(i)
+	p.LANs = []LANRoute{{CIDR: "192.168.1.0/24", Iface: "igb1"}}
+	nat, _, filter := RenderPF(p)
+	if !strings.Contains(nat, "nat on igb1 inet from 100.88.0.0/16 to 192.168.1.0/24") {
+		t.Errorf("LAN nat missing:\n%s", nat)
+	}
+	for _, want := range []string{
+		"pass in quick on tun_mg0 reply-to (tun_mg0 100.88.0.1) inet proto tcp from ! 100.88.0.0/16 to self port { 25565 }",
+		"pass in quick on tun_mg0 inet proto tcp from { 100.88.0.0/16 } to self port { 51823 } keep state # meshgate sync",
+	} {
+		if !strings.Contains(filter, want) {
+			t.Errorf("filter missing %q in\n%s", want, filter)
+		}
+	}
+	// pfSense GUI rules decide everything else: no blanket pass/block, no ACLs.
+	for _, bad := range []string{"block in quick on tun_mg0", "pass in quick on tun_mg0 all", "laptop to nas", "192.168.1.20"} {
+		if strings.Contains(filter, bad) {
+			t.Errorf("firewall-managed filter contains %q:\n%s", bad, filter)
+		}
+	}
+}
+
 func TestPFEdge(t *testing.T) {
 	i := in(vps)
 	i.WANIface = "vtnet0"

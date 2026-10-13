@@ -78,7 +78,8 @@ type Node struct {
 	Routes []string `json:"routes,omitempty"`
 	// LANPolicy controls what mesh devices may reach through this node
 	// (its shared subnets and the node itself): PolicyOpen allows
-	// everything, PolicyRestricted only what ACL records allow.
+	// everything, PolicyRestricted only what ACL records allow,
+	// PolicyFirewall leaves it to the host firewall (pfSense GUI rules).
 	LANPolicy string `json:"lan_policy,omitempty"`
 	// ViaRelay pins a node behind one relay (used for NodeStatic).
 	ViaRelay string `json:"via_relay,omitempty"`
@@ -257,10 +258,16 @@ func validPort(p int) bool { return p > 0 && p < 65536 }
 const (
 	PolicyOpen       = "open"
 	PolicyRestricted = "restricted"
+	// PolicyFirewall: meshgate adds no access rules of its own; the pfSense
+	// rules on the MESHGATE interface decide (see `meshgate pfsense`).
+	PolicyFirewall = "firewall"
 )
 
 // Restricted reports whether access through n is limited to ACL rules.
 func (n Node) Restricted() bool { return n.LANPolicy == PolicyRestricted }
+
+// FirewallManaged reports whether the host firewall's own rules decide.
+func (n Node) FirewallManaged() bool { return n.LANPolicy == PolicyFirewall }
 
 // LAN is a local network on a node, e.g. a VLAN interface.
 type LAN struct {

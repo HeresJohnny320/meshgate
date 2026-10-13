@@ -95,6 +95,14 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 				wg, wg, p.PreserveEdgeIP, a.Proto, mesh, pfPorts(a.Ports), pfComment(a.Comment))
 		}
 	}
+	if p.Firewall {
+		// The pfSense rules on the assigned interface decide; only keep
+		// meshgate's own services reachable whatever they say.
+		for _, a := range p.Own {
+			f = append(f, pfAllow(wg, a))
+		}
+		return join(n), join(r), join(f)
+	}
 	if !p.Restricted {
 		add(&f, "pass in quick on %s all keep state # LAN policy: open", wg)
 		return join(n), join(r), join(f)

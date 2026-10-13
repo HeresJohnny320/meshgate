@@ -17,6 +17,8 @@
 # Environment:
 #   MESHGATE_BIN=/path/to/meshgate   use a local binary instead of downloading
 #   MESHGATE_VERSION=v0.1.0          release to download (default: latest)
+#   MESHGATE_PFSENSE_GUI=0           pfSense: skip VPN > meshgate and the
+#                                    Firewall > Rules > MESHGATE tab
 set -eu
 
 REPO="heresjohnny320/meshgate"
@@ -37,7 +39,10 @@ fetch_url() { # url dest
 }
 
 if [ "${1:-}" = uninstall ]; then
-  if [ -x /usr/local/bin/meshgate ]; then /usr/local/bin/meshgate leave -y || true; fi
+  if [ -x /usr/local/bin/meshgate ]; then
+    [ $PFSENSE = 1 ] && { /usr/local/bin/meshgate pfsense remove || true; }
+    /usr/local/bin/meshgate leave -y || true
+  fi
   rm -f /usr/local/bin/meshgate /usr/local/etc/rc.d/meshgate.sh /etc/systemd/system/meshgate.service
   [ "$OS" = Linux ] && systemctl daemon-reload 2>/dev/null
   say "meshgate removed. Remove this node in the web UI/TUI of another node if it is still listed."
@@ -192,8 +197,12 @@ done
 if grep -q web_listen "$CONF" 2>/dev/null; then
   say "Web UI: http://127.0.0.1:8080 on this machine, or http://<mesh ip>:8080 from any mesh device"
 fi
+if [ $PFSENSE = 1 ] && [ "${MESHGATE_PFSENSE_GUI:-1}" != 0 ]; then
+  say "Adding meshgate to the pfSense GUI"
+  /usr/local/bin/meshgate pfsense install || say "could not add the pfSense GUI pages; retry with: meshgate pfsense install"
+fi
 if [ $PFSENSE = 1 ]; then
-  say "Done. Manage from the web UI or in an SSH shell: meshgate tui"
+  say "Done. Manage from VPN > meshgate in the pfSense GUI, or in an SSH shell: meshgate tui"
 else
   say "Done. Try: sudo meshgate status   |   sudo meshgate tui"
 fi

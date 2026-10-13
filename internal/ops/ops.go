@@ -297,10 +297,10 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.LANPolicy != nil {
 		switch *p.LANPolicy {
-		case model.PolicyOpen, model.PolicyRestricted, "":
+		case model.PolicyOpen, model.PolicyRestricted, model.PolicyFirewall, "":
 			n.LANPolicy = *p.LANPolicy
 		default:
-			return n, errors.New("lan policy must be open or restricted")
+			return n, errors.New("lan policy must be open, restricted or firewall")
 		}
 	}
 	_, err := s.Store.Put(model.Key(model.KindNode, id), n, scope)

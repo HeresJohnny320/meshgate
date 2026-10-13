@@ -4,6 +4,10 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 let view = null;
 let timer = null;
+// Inside the pfSense GUI (`meshgate pfsense install`) calls go through its
+// meshgate_api.php proxy, and the pfSense login replaces meshgate's own.
+const BASE = document.documentElement.dataset.api || "";
+if (BASE) document.getElementById("logout").classList.add("hidden");
 
 async function api(path, body) {
   const opts = body === undefined ? {} : {
@@ -11,7 +15,7 @@ async function api(path, body) {
     headers: { "Content-Type": "application/json", "X-Meshgate": "1" },
     body: JSON.stringify(body),
   };
-  const res = await fetch(path, opts);
+  const res = await fetch(BASE + path, opts);
   const data = await res.json().catch(() => ({}));
   if (res.status === 401) { showLogin(); throw new Error("login required"); }
   if (!res.ok) throw new Error(data.error || res.statusText);
@@ -129,7 +133,7 @@ function renderNodes(rt) {
       <td>${state}</td><td>${path}</td><td>${hs}</td>
       <td class="mono">${esc(p?.endpoint || "")}</td>
       <td>${p ? bytes(p.rx_bytes) + " / " + bytes(p.tx_bytes) : ""}</td>
-      <td class="mono">${esc((n.routes || []).join(", "))}${(n.routes || []).length ? (n.lan_policy === "restricted" ? ' <span class="chip local">restricted</span>' : ' <span class="chip">open</span>') : ""}</td>
+      <td class="mono">${esc((n.routes || []).join(", "))}${(n.routes || []).length ? ({ restricted: ' <span class="chip local">restricted</span>', firewall: ' <span class="chip local">pfSense rules</span>' }[n.lan_policy] || ' <span class="chip">open</span>') : ""}</td>
       <td class="actions">${n.kind === "server" || n.kind === "static" ? `<button class="small" data-edit-node="${esc(n.id)}">Edit</button>` : ""}
         ${n.id !== view.self_id ? `<button class="small danger" data-del="node:${esc(n.id)}">Remove</button>` : ""}</td></tr>`;
   });
@@ -179,7 +183,9 @@ function renderACLs() {
     const a = it.value;
     const enforcing = view.nodes.find((n) => n.value.id === a.node)?.value;
     const from = (a.from || []).length ? a.from.map(nodeName).join(", ") : "any device";
-    const policy = enforcing?.lan_policy === "restricted" ? "" : ' <span class="chip" title="This node\'s LAN policy is open, so the rule has no effect yet">policy open</span>';
+    const policy = enforcing?.lan_policy === "restricted" ? ""
+      : enforcing?.lan_policy === "firewall" ? ' <span class="chip" title="This node uses its pfSense firewall rules instead">pfSense rules</span>'
+      : ' <span class="chip" title="This node\'s LAN policy is open, so the rule has no effect yet">policy open</span>';
     return `<tr><td><b>${esc(a.name)}</b>${localChip(it)}</td><td>${esc(nodeName(a.node))}${policy}</td><td>${esc(from)}</td>
       <td class="mono">${esc(aclTarget(a))}</td><td>${esc(a.proto)}${a.ports ? " " + esc(a.ports) : ""}</td>
       <td>${a.enabled ? "on" : '<span class="chip">off</span>'}</td>
@@ -312,8 +318,9 @@ function nodeDialog(it) {
        <label class="inline full"><input type="checkbox" name="relay" ${n.relay ? "checked" : ""}> Relay (public endpoint reachable from anywhere)</label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
          <select name="lan_policy">
-           <option value="open" ${n.lan_policy !== "restricted" ? "selected" : ""}>Open: any mesh device</option>
+           <option value="open" ${!["restricted", "firewall"].includes(n.lan_policy) ? "selected" : ""}>Open: any mesh device</option>
            <option value="restricted" ${n.lan_policy === "restricted" ? "selected" : ""}>Restricted: only what access rules allow</option>
+           <option value="firewall" ${n.lan_policy === "firewall" ? "selected" : ""}>pfSense rules: Firewall → Rules → MESHGATE decides</option>
          </select></label>`;
   openDialog("Edit " + n.name, `<div class="form-grid"><label class="full">Name <input name="name" value="${esc(n.name)}" required></label>${relayField}${scopeField(it.local)}</div>`,
     async (fd) => {

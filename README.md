@@ -114,7 +114,12 @@ It installs meshgate, joins the mesh and starts it, without asking anything:
 
 - LAN and VLAN interfaces are shared automatically. The WAN is not.
 - Phones on your home Wi-Fi or a VLAN connect straight to pfSense.
-- The LAN starts out locked down.
+- **VPN → meshgate** shows the full dashboard inside the pfSense GUI, behind
+  your pfSense login.
+- **Firewall → Rules → MESHGATE** decides what mesh devices may reach. It
+  starts with one rule that allows everything; replace it with rules for the
+  hosts and ports you want (e.g. pass TCP to VM 1 port 443, pass TCP to VM 2
+  port 22). Anything without a rule is blocked by pfSense's default deny.
 
 To make pfSense the **web UI** (a new mesh) instead:
 
@@ -133,20 +138,30 @@ What meshgate changes on pfSense:
 
 | | |
 |---|---|
-| Interface | `mg0` (kernel `if_wg`), separate from pfSense's own WireGuard tunnels |
+| Interface | `tun_mg0` (kernel `if_wg`), assigned as **MESHGATE** (type None), separate from pfSense's own WireGuard tunnels |
+| GUI | VPN → meshgate (`/usr/local/www/vpn_meshgate.php`, `meshgate_api.php`, `meshgate/`), menu entry in `config.xml` |
 | Rules | pf anchors pfSense always includes: `natrules/meshgate` (NAT), `tftp-proxy/meshgate` (port-forward redirects), `userrules/meshgate` (filter). They survive pfSense filter reloads; meshgate also re-applies them every minute. |
 | WAN | Opens UDP 51820/51822 (and TCP 51821 on relays) to the WAN address, inside its anchor |
 | Files | `/usr/local/etc/meshgate/` (survives "Use RAM Disks"), service `/usr/local/etc/rc.d/meshgate.sh`, log `/var/log/meshgate.log` |
 
-New pfSense nodes default to the **restricted** LAN policy: mesh devices
-cannot reach pfSense itself or any LAN/VLAN until you add access rules.
+The node's LAN policy is **firewall**: meshgate adds no access rules of its
+own and pfSense's MESHGATE rules decide (meshgate only keeps its own sync and
+web UI ports reachable). `meshgate pfsense remove` takes the page, interface
+and its rules out again and switches back to meshgate's **restricted** policy
+(only meshgate access rules). To skip the GUI integration at install time, set
+`MESHGATE_PFSENSE_GUI=0`. Every `config.xml` change is a normal pfSense
+revision, so *Diagnostics → Backup & Restore → Config History* can undo it.
+
+Already installed? Rerun the install command (it updates meshgate and adds
+the GUI), or run `meshgate pfsense install` in a shell.
 
 Notes:
 - The pfSense GUI uses ports 80/443, so don't make pfSense the edge for HTTPS
   routes unless you move its GUI port. Port forwards work fine.
-- `mg0` does not appear under *Interfaces → Assignments* unless you assign it.
-  meshgate doesn't need that. Assign it only if you also want to write your own
-  pfSense GUI rules for mesh traffic.
+- Rules on the MESHGATE tab see the mesh device's own address (e.g.
+  `100.88.12.34`) as the source, so you can allow single devices.
+- If pfSense itself is a relay and you narrow the MESHGATE rules, keep a rule
+  passing mesh net (`100.88.0.0/16`) to mesh net, or relayed traffic stops.
 
 ## Windows
 

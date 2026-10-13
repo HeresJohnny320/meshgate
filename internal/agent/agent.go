@@ -462,7 +462,10 @@ func (a *Agent) serveLocal(ctx context.Context) error {
 		return err
 	}
 	os.Chmod(a.Cfg.Socket, 0o600)
-	srv := &http.Server{Handler: a.ops.Handler("/v1/")}
+	mux := http.NewServeMux()
+	mux.Handle("/v1/", a.ops.Handler("/v1/"))
+	mux.HandleFunc("POST /v1/qr", webui.QR) // for the pfSense GUI page (meshgate pfsense)
+	srv := &http.Server{Handler: mux}
 	go func() { <-ctx.Done(); srv.Close() }()
 	return srv.Serve(l)
 }

@@ -456,7 +456,7 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 		f.text("endpoints", "Endpoints (host:port, comma)", strings.Join(n.Endpoints, ", "), "1.2.3.4:51820, 192.168.1.10:51820").
 			text("routes", "Shared subnets (comma)", strings.Join(n.Routes, ", "), "192.168.1.0/24").
 			toggle("relay", "Relay (public endpoint)", n.Relay).
-			choice("policy", "LAN policy", []option{{"open: any mesh device", model.PolicyOpen}, {"restricted: rules only", model.PolicyRestricted}}, policyOf(n))
+			choice("policy", "LAN policy", []option{{"open: any mesh device", model.PolicyOpen}, {"restricted: rules only", model.PolicyRestricted}, {"firewall: pfSense rules decide", model.PolicyFirewall}}, policyOf(n))
 	case model.NodeStatic:
 		f.choice("via", "Connects through relay", m.relayOptions(), n.ViaRelay)
 	}
@@ -464,8 +464,8 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 }
 
 func policyOf(n model.Node) string {
-	if n.Restricted() {
-		return model.PolicyRestricted
+	if n.Restricted() || n.FirewallManaged() {
+		return n.LANPolicy
 	}
 	return model.PolicyOpen
 }

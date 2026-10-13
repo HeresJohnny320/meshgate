@@ -85,8 +85,13 @@ type Plan struct {
 	WANOpen []Allow
 	// Restricted drops everything from the mesh that Allow does not match.
 	Restricted bool
-	Allow      []Allow
-	Warnings   []string
+	// Firewall leaves mesh access to the host firewall's own rules (pfSense
+	// GUI rules on the assigned interface); meshgate only keeps Own open.
+	Firewall bool
+	Allow    []Allow
+	// Own are meshgate's own services over the mesh (sync, web UI).
+	Own      []Allow
+	Warnings []string
 }
 
 // LANRoute is a shared subnet and the interface it lives on.
@@ -97,7 +102,7 @@ type LANRoute struct {
 
 // Build computes the plan.
 func Build(in Input) Plan {
-	p := Plan{Iface: in.Iface, Mesh: in.Network.CIDR, WANIface: in.WANIface, Restricted: in.Self.Restricted()}
+	p := Plan{Iface: in.Iface, Mesh: in.Network.CIDR, WANIface: in.WANIface, Restricted: in.Self.Restricted(), Firewall: in.Self.FirewallManaged()}
 	byID := map[string]model.Node{}
 	for _, n := range in.Nodes {
 		byID[n.ID] = n
@@ -202,11 +207,12 @@ func Build(in Input) Plan {
 
 	// meshgate's own services over the mesh.
 	if in.MeshPort > 0 {
-		p.Allow = append(p.Allow, Allow{Comment: "meshgate sync", Src: []string{in.Network.CIDR}, Self: true, Proto: "tcp", Ports: []string{fmt.Sprint(in.MeshPort)}})
+		p.Own = append(p.Own, Allow{Comment: "meshgate sync", Src: []string{in.Network.CIDR}, Self: true, Proto: "tcp", Ports: []string{fmt.Sprint(in.MeshPort)}})
 	}
 	if in.WebPort > 0 {
-		p.Allow = append(p.Allow, Allow{Comment: "meshgate web ui", Src: []string{in.Network.CIDR}, Self: true, Proto: "tcp", Ports: []string{fmt.Sprint(in.WebPort)}})
+		p.Own = append(p.Own, Allow{Comment: "meshgate web ui", Src: []string{in.Network.CIDR}, Self: true, Proto: "tcp", Ports: []string{fmt.Sprint(in.WebPort)}})
 	}
+	p.Allow = append(p.Allow, p.Own...)
 
 	// User access rules enforced here.
 	acls := append([]model.ACL(nil), in.ACLs...)
