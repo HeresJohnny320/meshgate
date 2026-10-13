@@ -414,7 +414,10 @@ again by clearing the field.
 
 **Checks.** Run them from the dashboard (**Tools** tab, runs on the node
 serving the page), the command line, or the phone (**Tests** in the app, runs on
-the phone through the tunnel):
+the phone through the tunnel). In the dashboard, **Quick pick** lists your
+mesh devices, servers' public addresses, both ends of every port forward and
+your HTTPS sites; picking one fills in the target (and port), or type any
+address yourself:
 
 | Check | Command | Shows |
 |---|---|---|

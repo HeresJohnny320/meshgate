@@ -569,7 +569,54 @@ $("#diag-form").addEventListener("submit", async (e) => {
   btn.disabled = false; btn.textContent = "Run";
 });
 
+// Quick-pick targets for the Tools tab: mesh devices, servers' public
+// addresses, both ends of every port forward, and HTTPS sites.
+function diagPicks() {
+  const groups = { "Mesh devices": [], "Public addresses": [], "Port forwards (from outside)": [], "Port forwards (target)": [], "HTTPS sites": [] };
+  const node = (id) => view.nodes.find((n) => n.value.id === id)?.value;
+  const publicHost = (n) => (n?.endpoints || []).map((e) => e.replace(/:\d+$/, "")).find((h) => !/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(h));
+  const l4 = (p) => (p === "udp" ? "udp" : "tcp");
+  view.nodes.forEach(({ value: n }) => {
+    if (n.mesh_ip) groups["Mesh devices"].push({ label: `${n.name} — ${n.mesh_ip}`, target: n.mesh_ip });
+    const pub = n.kind === "server" && publicHost(n);
+    if (pub) groups["Public addresses"].push({ label: `${n.name} public — ${pub}`, target: pub });
+  });
+  (view.forwards || []).forEach(({ value: f }) => {
+    const pub = publicHost(node(f.edge_node));
+    if (pub) groups["Port forwards (from outside)"].push({ label: `${f.name} — ${pub}:${f.listen_port}/${f.proto}`, target: pub, port: f.listen_port, kind: l4(f.proto) });
+    const ip = f.target_ip || node(f.target_node)?.mesh_ip;
+    if (ip) groups["Port forwards (target)"].push({ label: `${f.name} target — ${ip}:${f.target_port}`, target: ip, port: f.target_port, kind: l4(f.proto) });
+  });
+  (view.routes || []).forEach(({ value: r }) => groups["HTTPS sites"].push({ label: r.hostname, target: "https://" + r.hostname + "/", kind: "http" }));
+  return groups;
+}
+
+function renderPicks() {
+  const groups = diagPicks(), sel = $("#diag-pick"), keep = sel.value;
+  const all = [];
+  sel.innerHTML = '<option value="">— choose a device, forward or site, or type below —</option>' +
+    Object.entries(groups).filter(([, l]) => l.length).map(([g, l]) => `<optgroup label="${esc(g)}">` +
+      l.map((p) => { all.push(p); return `<option value="${esc(JSON.stringify(p))}">${esc(p.label)}</option>`; }).join("") + "</optgroup>").join("");
+  sel.value = keep;
+  $("#diag-targets").innerHTML = [...new Map(all.map((p) => [p.target, p])).values()]
+    .map((p) => `<option value="${esc(p.target)}">${esc(p.label)}</option>`).join("");
+}
+
+$("#diag-pick").addEventListener("change", (e) => {
+  if (!e.target.value) return;
+  const p = JSON.parse(e.target.value), f = $("#diag-form");
+  const kind = f.kind.value;
+  // Forwards switch to their TCP/UDP check, sites to HTTP; a device keeps the
+  // current check unless it needs a URL or no target at all.
+  if (p.kind) f.kind.value = p.kind;
+  else if (kind === "http" || kind === "myip") f.kind.value = "ping";
+  f.target.value = f.kind.value === "http" && !p.target.startsWith("http") ? "http://" + p.target + (p.port ? ":" + p.port : "") + "/" : p.target;
+  if (p.port) f.port.value = p.port;
+  diagPortField();
+});
+
 function renderTools() {
+  renderPicks();
   const self = view.nodes.find((n) => n.value.id === view.self_id)?.value;
   if (self) $("#diag-from").textContent = `Runs from ${self.name} (${self.mesh_ip}), the node serving this page.`;
   const on = servers().filter((n) => n.test_port);

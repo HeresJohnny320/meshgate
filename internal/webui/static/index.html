@@ -119,7 +119,9 @@
                 <option value="udp">UDP answer (meshgate test service)</option>
                 <option value="http">HTTP / HTTPS page</option>
               </select></label>
-            <label id="diag-target">Target <input name="target" placeholder="100.88.x.y, 192.168.1.20, example.com or https://…"></label>
+            <label>Quick pick <select id="diag-pick"><option value="">— choose a device, forward or site, or type below —</option></select></label>
+            <label id="diag-target">Target <input name="target" list="diag-targets" autocomplete="off" placeholder="100.88.x.y, 192.168.1.20, example.com or https://…"></label>
+            <datalist id="diag-targets"></datalist>
             <label id="diag-port">Port <input name="port" type="number" min="1" max="65535" placeholder="8099"></label>
             <button type="submit" id="diag-run">Run</button>
           </form>
