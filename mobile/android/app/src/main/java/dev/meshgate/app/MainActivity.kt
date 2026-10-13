@@ -6,6 +6,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -380,6 +381,9 @@ fun ColumnScope.AdminScreen(url: String, onClose: () -> Unit) {
         modifier = Modifier.fillMaxWidth().weight(1f),
         factory = { ctx ->
             WebView(ctx).apply {
+                // Fill the space Compose gives us; with the default
+                // wrap_content the page sees a near-zero viewport height.
+                layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 webViewClient = WebViewClient()
