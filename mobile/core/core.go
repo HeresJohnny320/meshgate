@@ -433,6 +433,9 @@ func (e *Engine) reconcile() error {
 		e.lastErr = "this device was removed from the mesh"
 		return errors.New(e.lastErr)
 	}
+	if e.killSwitch() {
+		self.ExitOnly = true // the phone's own kill switch adds to the admin's setting
+	}
 	netw, _ := store.Get[model.Network](e.store, model.Key(model.KindNetwork, "main"))
 	nodes := store.List[model.Node](e.store, model.KindNode)
 	statuses := map[string]model.Status{}
@@ -459,7 +462,7 @@ func (e *Engine) reconcile() error {
 	e.prev = &res
 
 	cfg, err := meshcfg.Build(meshcfg.Input{Network: netw, Self: self, Nodes: nodes, Paths: res,
-		LocalAddrs: parseAddrs(e.plat.LocalAddresses()), ExitCapable: true})
+		LocalAddrs: parseAddrs(e.plat.LocalAddresses()), ExitCapable: true, ExitChoice: e.exitChoice()})
 	if err != nil {
 		return err
 	}
@@ -467,7 +470,7 @@ func (e *Engine) reconcile() error {
 	for _, r := range cfg.Routes {
 		ts.Routes = append(ts.Routes, r.String())
 	}
-	if cfg.ExitVia != "" {
+	if cfg.ExitVia != "" || cfg.ExitBlocked {
 		ts.DNS = exitDNS
 	}
 	b, _ := json.Marshal(ts)
@@ -611,6 +614,25 @@ type status struct {
 	Exit       string   `json:"exit,omitempty"`
 	ExitWanted string   `json:"exit_wanted,omitempty"`
 	Warnings   []string `json:"warnings,omitempty"`
+	// ExitBlocked: exit only, and no exit node reachable: no internet.
+	ExitBlocked bool `json:"exit_blocked,omitempty"`
+	KillSwitch  bool `json:"kill_switch"`
+	// Permissions, as the admin set them: the exit nodes this device may
+	// use (with live state) and what it may reach.
+	Exits      []exitOption `json:"exits"`
+	ExitChoice string       `json:"exit_choice"` // "" admin default, "off", or a node ID
+	Access     []accessLine `json:"access"`
+}
+
+type exitOption struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Up   bool   `json:"up"`
+}
+
+type accessLine struct {
+	Node string `json:"node"`
+	What string `json:"what"`
 }
 
 type adminLink struct {
@@ -650,11 +672,62 @@ func (e *Engine) exitVerdict(out string) string {
 	return "\nExit node " + ex.Name + " is on, but that IP is not one of its addresses (its traffic may leave from another IP, or the exit is not working)."
 }
 
+func (e *Engine) choicePath() string { return filepath.Join(e.dir, "exit-choice") }
+
+func (e *Engine) exitChoice() string {
+	b, _ := os.ReadFile(e.choicePath())
+	return strings.TrimSpace(string(b))
+}
+
+// SetExitChoice picks this phone's exit node among those it is allowed:
+// a node ID, "off" for the phone's own connection, "" for the admin's default.
+func (e *Engine) SetExitChoice(id string) error {
+	var err error
+	if id == "" {
+		if err = os.Remove(e.choicePath()); os.IsNotExist(err) {
+			err = nil
+		}
+	} else {
+		err = os.WriteFile(e.choicePath(), []byte(id+"\n"), 0o600)
+	}
+	select {
+	case e.kick <- struct{}{}:
+	default:
+	}
+	return err
+}
+
+func (e *Engine) killPath() string { return filepath.Join(e.dir, "killswitch") }
+
+func (e *Engine) killSwitch() bool { _, err := os.Stat(e.killPath()); return err == nil }
+
+// KillSwitch reports the phone's kill switch.
+func (e *Engine) KillSwitch() bool { return e.killSwitch() }
+
+// SetKillSwitch turns the phone's kill switch on or off (kept on the phone).
+// On: internet only through an exit node; with none reachable it is blocked
+// until one is back, the switch is turned off, or meshgate is stopped.
+func (e *Engine) SetKillSwitch(on bool) error {
+	if on {
+		if err := os.WriteFile(e.killPath(), []byte("on\n"), 0o600); err != nil {
+			return err
+		}
+	} else if err := os.Remove(e.killPath()); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	select {
+	case e.kick <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
 // StatusJSON describes the current state for the app UI.
 func (e *Engine) StatusJSON() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	st := status{Joined: e.id != nil, Running: e.dev != nil, Error: e.lastErr, Peers: []peerStatus{}, Admin: []adminLink{}}
+	st := status{Joined: e.id != nil, Running: e.dev != nil, Error: e.lastErr, Peers: []peerStatus{}, Admin: []adminLink{},
+		KillSwitch: e.killSwitch(), Exits: []exitOption{}, ExitChoice: e.exitChoice(), Access: []accessLine{}}
 	if !e.lastSync.IsZero() {
 		st.LastSync = e.lastSync.Unix()
 	}
@@ -678,7 +751,21 @@ func (e *Engine) StatusJSON() string {
 	}
 	if e.lastCfg != nil {
 		st.Home, st.Exit, st.Warnings = e.lastCfg.Home, names[e.lastCfg.ExitVia], e.lastCfg.Warnings
+		st.ExitBlocked = e.lastCfg.ExitBlocked
 	}
+	var self model.Node
+	for _, n := range nodes {
+		if n.ID == e.id.NodeID {
+			self = n
+		}
+	}
+	for _, n := range nodes {
+		if n.Exit && n.ID != self.ID && self.MayUseExit(n.ID) {
+			up := e.prev != nil && e.prev.Up[n.ID]
+			st.Exits = append(st.Exits, exitOption{ID: n.ID, Name: n.Name, Up: up})
+		}
+	}
+	st.Access = accessFor(self, nodes, store.List[model.ACL](e.store, model.KindACL))
 	for _, n := range nodes {
 		if n.ID == e.id.NodeID {
 			st.Name, st.MeshIP, st.ExitWanted = n.Name, n.MeshIP, names[n.ExitVia]
@@ -714,4 +801,47 @@ func (e *Engine) StatusJSON() string {
 	sort.Slice(st.Peers, func(i, j int) bool { return st.Peers[i].Name < st.Peers[j].Name })
 	b, _ := json.Marshal(st)
 	return string(b)
+}
+
+// accessFor describes what self may reach on routers that share LANs: an
+// open policy allows the whole subnet, a restricted one only the rules that
+// name this device (synced to it), pfSense's firewall policy is decided in
+// pfSense.
+func accessFor(self model.Node, nodes []model.Node, acls []model.ACL) []accessLine {
+	var out []accessLine
+	for _, n := range nodes {
+		if n.Kind != model.NodeServer || len(n.Routes) == 0 || n.ID == self.ID {
+			continue
+		}
+		switch {
+		case n.FirewallManaged():
+			out = append(out, accessLine{n.Name, strings.Join(n.Routes, ", ") + ": as pfSense's MESHGATE rules allow"})
+		case !n.Restricted():
+			out = append(out, accessLine{n.Name, strings.Join(n.Routes, ", ") + ": everything"})
+		default:
+			found := false
+			for _, a := range acls {
+				if !a.Enabled || a.Node != n.ID {
+					continue
+				}
+				to := a.To
+				if to == model.ToSelf {
+					to = "the node itself"
+				}
+				what := to + " " + a.Proto
+				if a.Proto == "both" {
+					what = to + " tcp+udp"
+				}
+				if a.Ports != "" {
+					what += " " + a.Ports
+				}
+				out = append(out, accessLine{n.Name, what})
+				found = true
+			}
+			if !found {
+				out = append(out, accessLine{n.Name, "nothing (locked down, no rule for this device)"})
+			}
+		}
+	}
+	return out
 }

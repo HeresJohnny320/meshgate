@@ -224,9 +224,80 @@ check "phone uses vps as exit node" "test \"\$(pj \"print(s.get('exit',''))\")\"
 check "the internet sees the vps IP" "test \"\$(myip)\" = 203.0.113.10"
 check "phone DNS goes through the exit" "grep -q 'dns: \\[1.1.1.1' '$D/phone.log'"
 check "phone still reaches home LAN with exit node" "x phone ping -c2 -W2 192.168.1.10 >/dev/null"
+
+echo; echo "== LAN exit: a LAN device behind home goes out through vps, and nowhere else"
+x nas ip route replace default via 192.168.1.10   # home is the NAS's router for this test
+nasip() { x nas sh -c 'echo | nc -w3 198.18.1.5 7000' 2>/dev/null | sed -n 's/.*you are //p'; }
+check "before: the NAS reaches the internet through home's line" "test \"\$(nasip)\" = 198.51.100.20"
+api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"lan_exits\":[{\"src\":\"192.168.1.20\",\"via\":\"$VPS_ID\"}]},\"scope\":\"cluster\"}" >/dev/null
+sleep 8
+check "LAN device's internet leaves through the vps exit" "test \"\$(nasip)\" = 203.0.113.10"
+check "LAN device still reaches its LAN" "x nas ping -c1 -W2 192.168.1.10 >/dev/null"
+api vps node "{\"id\":\"$VPS_ID\",\"patch\":{\"exit\":false},\"scope\":\"cluster\"}" >/dev/null
+sleep 8
+check "exit gone, exit only off: LAN device falls back to home's line" "test \"\$(nasip)\" = 198.51.100.20"
+api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"exit_only\":true},\"scope\":\"cluster\"}" >/dev/null
+sleep 8
+check "exit gone, exit only on: LAN device gets no internet (no leak via home)" "test -z \"\$(nasip)\""
+api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"exit_only\":false},\"scope\":\"cluster\"}" >/dev/null
+api vps node "{\"id\":\"$VPS_ID\",\"patch\":{\"exit\":true},\"scope\":\"cluster\"}" >/dev/null
+api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"lan_exits\":[]},\"scope\":\"cluster\"}" >/dev/null
+x nas ip route replace default via 192.168.1.1
+sleep 6
+check "LAN exit removed: NAS back on the home line" "test \"\$(nasip)\" = 198.51.100.20"
+i=0; while [ "$(pj "print(s.get('exit',''))")" != vps ] && [ $i -lt 45 ]; do i=$((i+1)); sleep 1; done
+
 kill -USR2 "$(cat "$D/phone.pid")"; sleep 3
 grep "diag myip" "$D/phone.log" | tail -1
 check "app's public IP test confirms the exit node" "grep 'diag myip' '$D/phone.log' | tail -1 | grep -q 'leaves through the exit node'"
+
+echo; echo "== exit failover, and exit only when every exit is down"
+VPS2_ID=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([n["value"]["id"] for n in v["nodes"] if n["value"]["name"]=="vps2"][0])')
+api vps node "{\"id\":\"$VPS2_ID\",\"patch\":{\"exit\":true},\"scope\":\"cluster\"}" >/dev/null
+api vps node "{\"id\":\"$PHONE_ID\",\"patch\":{\"exit_only\":true},\"scope\":\"cluster\"}" >/dev/null
+sleep 6
+x inet ip link set i-vps down
+i=0; while [ "$(pj "print(s.get('exit',''))")" != vps2 ] && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
+echo "phone: exit=$(pj "print(s.get('exit',''))") after ${i}s"
+check "vps down: phone fails over to exit vps2" "test \"\$(pj \"print(s.get('exit',''))\")\" = vps2"
+check "the internet now sees vps2" "test \"\$(myip)\" = 203.0.114.10"
+x inet ip link set i-vps2 down
+i=0; while [ "$(pj "print(s.get('exit_blocked',False))")" != True ] && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
+check "every exit down, exit only: phone has no internet" "test -z \"\$(myip)\""
+check "...and says so" "test \"\$(pj \"print(s.get('exit_blocked',False))\")\" = True"
+x inet ip link set i-vps up; x inet ip link set i-vps2 up
+i=0; while [ -z "$(pj "print(s.get('exit',''))")" ] && [ $i -lt 90 ]; do i=$((i+1)); sleep 1; done
+check "exits back: phone's internet returns through an exit" "myip | grep -q '^203.0.11[34].10$'"
+api vps node "{\"id\":\"$PHONE_ID\",\"patch\":{\"exit_only\":false},\"scope\":\"cluster\"}" >/dev/null
+T=$(date +%s); i=0; while [ "$(pj "print(s.get('last_sync',0))")" -le "$T" ] && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
+
+echo; echo "== the phone's own kill switch (admin's exit only is off)"
+echo 'killswitch on' > "$D/phone.cmd"; sleep 6
+x inet ip link set i-vps down; x inet ip link set i-vps2 down
+i=0; while [ "$(pj "print(s.get('exit_blocked',False))")" != True ] && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
+check "kill switch: every exit down blocks the phone's internet" "test -z \"\$(myip)\""
+echo 'killswitch off' > "$D/phone.cmd"; sleep 6
+check "kill switch off: own connection again" "test \"\$(myip)\" = 198.18.3.60"
+x inet ip link set i-vps up; x inet ip link set i-vps2 up
+i=0; while [ -z "$(pj "print(s.get('exit',''))")" ] && [ $i -lt 90 ]; do i=$((i+1)); sleep 1; done
+
+echo; echo "== permissions: the phone may only use vps2, and picks itself"
+api vps node "{\"id\":\"$PHONE_ID\",\"patch\":{\"exits_allowed\":[\"$VPS2_ID\"]},\"scope\":\"cluster\"}" >/dev/null
+echo "exit $VPS2_ID" > "$D/phone.cmd"
+i=0; while [ "$(pj "print(','.join(x['name'] for x in s['exits']) + '/' + s.get('exit',''))")" != vps2/vps2 ] && [ $i -lt 45 ]; do i=$((i+1)); sleep 1; done
+check "phone lists exactly its allowed exits" "test \"\$(pj \"print(','.join(x['name'] for x in s['exits']))\")\" = vps2"
+check "phone's own pick: vps2" "test \"\$(myip)\" = 203.0.114.10"
+echo "exit $VPS_ID" > "$D/phone.cmd"; sleep 8
+check "picking a forbidden exit is ignored" "test \"\$(pj \"print(s.get('exit',''))\")\" = vps2"
+PHONE_IP=$(pj "print(s['mesh_ip'])")
+check "vps (not allowed) does not let the phone out" "! x vps nft list table inet meshgate | grep 'exit node' | grep -q '$PHONE_IP'"
+echo "exit off" > "$D/phone.cmd"
+i=0; while [ -n "$(pj "print(s.get('exit',''))")" ] && [ $i -lt 30 ]; do i=$((i+1)); sleep 1; done
+check "phone picks its own connection" "test \"\$(myip)\" = 198.18.3.60"
+echo "exit default" > "$D/phone.cmd"
+api vps node "{\"id\":\"$PHONE_ID\",\"patch\":{\"exits_allowed\":[]},\"scope\":\"cluster\"}" >/dev/null
+api vps node "{\"id\":\"$VPS2_ID\",\"patch\":{\"exit\":false},\"scope\":\"cluster\"}" >/dev/null
+i=0; while [ "$(pj "print(s.get('exit',''))")" != vps ] && [ $i -lt 45 ]; do i=$((i+1)); sleep 1; done
 
 echo; echo "== phone walks into home Wi-Fi"
 x phone ip link set wifi up
@@ -292,6 +363,39 @@ check "game forward still works while locked down" "echo '$OUT4' | grep -q 'you 
 api vps forward "{\"scope\":\"cluster\",\"forward\":{\"name\":\"after-lockdown\",\"proto\":\"tcp\",\"edge_node\":\"$VPS_ID\",\"listen_port\":4100,\"target_node\":\"$HOME_ID\",\"target_port\":4100,\"enabled\":true}}" >/dev/null
 sleep 3
 check "config sync still reaches locked-down home" "api home view | grep -q after-lockdown"
+
+echo; echo "== remote update: vps tells home to install the latest release"
+# Fake GitHub on the "internet": release v9.9.9 is this binary plus a few
+# bytes (still runs, different checksum), with matching SHA256SUMS.
+mkdir -p "$D/rel" && cp "$BIN" "$D/rel/meshgate-linux-amd64" && printf 'v9.9.9-padding' >> "$D/rel/meshgate-linux-amd64"
+(cd "$D/rel" && sha256sum meshgate-linux-amd64 > SHA256SUMS)
+ip netns exec fr python3 -c '
+import http.server, os, sys
+root = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_HEAD(self): self.do_GET(body=False)
+    def do_GET(self, body=True):
+        if self.path == "/releases/latest":
+            self.send_response(302); self.send_header("Location", "/releases/tag/v9.9.9"); self.end_headers(); return
+        p = os.path.join(root, os.path.basename(self.path))
+        if not self.path.startswith("/releases/download/v9.9.9/") or not os.path.isfile(p):
+            self.send_response(404); self.end_headers(); return
+        b = open(p, "rb").read(); self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers()
+        if body: self.wfile.write(b)
+http.server.HTTPServer(("0.0.0.0", 7080), H).serve_forever()' "$D/rel" > /dev/null 2>&1 & echo $! > "$D/rel.pid"
+export MESHGATE_UPDATE_URL=http://198.18.1.5:7080
+cp "$BIN" "$D/meshgate-home"
+kill "$(cat "$D/home.pid")"; while kill -0 "$(cat "$D/home.pid")" 2>/dev/null; do sleep 0.2; done
+BIN_SAVED=$BIN; BIN="$D/meshgate-home"; start home; BIN=$BIN_SAVED
+check "update --check sees the new release" "x home '$D/meshgate-home' -config '$D/home/node.json' update --check | grep -q 'latest release v9.9.9'"
+HOME_PID=$(cat "$D/home.pid")
+api vps update "{\"node\":\"$HOME_ID\"}" | grep -q updating && echo "update requested"
+i=0; while kill -0 "$HOME_PID" 2>/dev/null && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
+check "home installed the verified release and exited to restart" "! kill -0 $HOME_PID 2>/dev/null && cmp -s '$D/meshgate-home' '$D/rel/meshgate-linux-amd64'"
+BIN="$D/meshgate-home"; start home; BIN=$BIN_SAVED
+check "home runs again after the update" "api home view >/dev/null"
+unset MESHGATE_UPDATE_URL
 
 if [ "$FAILED" = 1 ]; then
   echo "--- phone log"; tail -30 "$D/phone.log"

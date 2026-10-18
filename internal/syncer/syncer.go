@@ -87,7 +87,7 @@ func (s *Syncer) Handler() http.Handler {
 		}
 		since, _ := strconv.ParseUint(r.URL.Query().Get("since"), 10, 64)
 		entries, seq := s.Store.Since(since)
-		writeJSON(w, batch{Entries: join.Filter(caller.Kind, entries), Seq: seq})
+		writeJSON(w, batch{Entries: join.FilterFor(caller, entries), Seq: seq})
 	})
 	mux.HandleFunc("POST /v1/sync", func(w http.ResponseWriter, r *http.Request) {
 		caller, ok := s.caller(r)

@@ -25,6 +25,7 @@ const (
 	MarkEdgeKeep = 0x4d48 // edge: DNATed connection that must not be masqueraded
 	TableRoutes  = 51820  // subnet routes through the mesh
 	TableReply   = 51821  // default route over the mesh for MarkPreserve
+	TableLANExit = 51822  // default route (or blackhole) for LAN devices sent to an exit node
 )
 
 // Input describes what this node needs.
@@ -46,6 +47,11 @@ type Input struct {
 	TestPort int
 	// WANIface is the internet-facing interface (pf only).
 	WANIface string
+	// LAN exits (meshcfg.Config): LAN sources sent to the exit node at mesh
+	// IP LANExitGW, or blocked from the internet while LANExitDown.
+	LANExitSrcs []string
+	LANExitGW   string
+	LANExitDown bool
 }
 
 // DNAT is one forward on an edge node.
@@ -84,6 +90,11 @@ type Plan struct {
 	// ExitClients are mesh IPs of devices using this node as their exit
 	// node: their internet traffic is masqueraded out of this host.
 	ExitClients []string
+	// LANExitSrcs (router side): LAN devices whose internet traffic goes
+	// to the exit node at LANExitGW; never out of this router's own
+	// internet line, even while the exit is down.
+	LANExitSrcs []string
+	LANExitGW   string
 	// PreserveEdgeIP is the mesh IP of the edge delivering real client IPs.
 	PreserveEdgeIP string
 	// PreserveIn lists those inbound services (pf needs them for reply-to).
@@ -100,6 +111,11 @@ type Plan struct {
 	// Own are meshgate's own services over the mesh (sync, web UI).
 	Own      []Allow
 	Warnings []string
+}
+
+func validIPv4(s string) bool {
+	a, err := netip.ParseAddr(s)
+	return err == nil && a.Is4()
 }
 
 // CounterName is the nft counter object for a forward ("f", id, "in"/"out")
@@ -198,11 +214,20 @@ func Build(in Input) Plan {
 	}
 	if in.Self.Exit {
 		for _, n := range in.Nodes {
-			if n.ExitVia == in.Self.ID && n.MeshIP != "" {
+			// Devices allowed to use this exit (their permissions).
+			if n.ID != in.Self.ID && n.MayUseExit(in.Self.ID) && validIPv4(n.MeshIP) {
 				p.ExitClients = append(p.ExitClients, n.MeshIP)
 			}
 		}
 		sort.Strings(p.ExitClients)
+	}
+	for _, s := range in.LANExitSrcs {
+		if pfx, err := netip.ParsePrefix(s); err == nil {
+			p.LANExitSrcs = append(p.LANExitSrcs, pfx.String())
+		}
+	}
+	if len(p.LANExitSrcs) > 0 && !in.LANExitDown && validIPv4(in.LANExitGW) {
+		p.LANExitGW = in.LANExitGW
 	}
 	// Never block a port an enabled forward is using.
 	kept := p.Blocked[:0]

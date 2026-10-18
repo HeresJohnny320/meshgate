@@ -13,6 +13,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import org.json.JSONObject
 import kotlin.concurrent.thread
@@ -41,8 +42,13 @@ class MeshVpnService : VpnService() {
                 watchNetworks()
             } catch (e: Exception) {
                 Log.e("meshgate", "start failed", e)
-                shutdown()
-                stopSelf()
+                if (Mesh.engine.killSwitch()) {
+                    // Kill switch: fail closed instead of handing traffic back.
+                    blockAll()
+                } else {
+                    shutdown()
+                    stopSelf()
+                }
             }
         }
         return START_STICKY
@@ -59,7 +65,18 @@ class MeshVpnService : VpnService() {
         super.onDestroy()
     }
 
+    private var blocker: ParcelFileDescriptor? = null
+
+    /** A VPN interface that takes all traffic and forwards none of it. */
+    private fun blockAll() {
+        blocker = Builder().setSession("meshgate (blocked: kill switch)")
+            .addAddress("10.255.255.1", 32).addRoute("0.0.0.0", 0).addDnsServer("10.255.255.2")
+            .establish()
+    }
+
     private fun shutdown() {
+        blocker?.close()
+        blocker = null
         networkCallback?.let {
             getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it)
         }

@@ -152,3 +152,129 @@ func TestExitNodeNeedsCapablePlatform(t *testing.T) {
 		t.Fatalf("exit used on an incapable platform: %+v", c)
 	}
 }
+
+func lanExitInput(exitOn bool) Input {
+	h := home
+	h.LANExits = []model.LANExit{{Src: "192.168.1.205", Via: "vps"}, {Src: "192.168.20.0/24", Via: "vps"}}
+	v := vps
+	v.Exit = exitOn
+	return Input{Network: network, Self: h, Nodes: []model.Node{phone, h, v}, LANExitCapable: true,
+		Paths: pathsel.Result{Paths: map[string]pathsel.Path{"vps": {Endpoint: "1.1.1.1:51820"}, "phone": {Via: "vps"}}}}
+}
+
+func TestLANExit(t *testing.T) {
+	c, _ := Build(lanExitInput(true))
+	if c.LANExitVia != "vps" || c.LANExitDown || len(c.LANExitSrcs) != 2 {
+		t.Fatalf("via=%q down=%v srcs=%v", c.LANExitVia, c.LANExitDown, c.LANExitSrcs)
+	}
+	if got := ips(peer(t, c, "vps")); !strings.HasPrefix(got, "0.0.0.0/0,") {
+		t.Fatalf("vps allowed = %s", got)
+	}
+	for _, r := range c.Routes {
+		if r.Bits() == 0 {
+			t.Fatal("LAN exit must not add a default route for the router itself")
+		}
+	}
+}
+
+func TestLANExitFailsClosed(t *testing.T) {
+	in0 := lanExitInput(false) // vps no longer offered as exit
+	c, _ := Build(in0)
+	if c.LANExitDown || len(c.LANExitSrcs) != 0 {
+		t.Fatalf("without exit only, LAN exits must fall back to the normal connection: down=%v srcs=%v", c.LANExitDown, c.LANExitSrcs)
+	}
+	in0.Self.ExitOnly = true
+	c, _ = Build(in0)
+	if c.LANExitVia != "" || !c.LANExitDown || strings.Contains(ips(peer(t, c, "vps")), "0.0.0.0/0") {
+		t.Fatalf("via=%q down=%v", c.LANExitVia, c.LANExitDown)
+	}
+	// Preserve-client-IP through a different edge needs the default route.
+	in := lanExitInput(true)
+	in.Self.ExitOnly = true
+	v2 := model.Node{ID: "vps2", Name: "vps2", Kind: model.NodeServer, Relay: true, PublicKey: "Kv2", MeshIP: "100.88.0.9", Endpoints: []string{"2.2.2.2:51820"}}
+	in.Nodes = append(in.Nodes, v2)
+	in.Paths.Paths["vps2"] = pathsel.Path{Endpoint: "2.2.2.2:51820"}
+	in.Forwards = []model.Forward{{ID: "mc", Name: "mc", Proto: model.ProtoTCP, EdgeNode: "vps2", ListenPort: 25565,
+		TargetNode: "home", TargetPort: 25565, PreserveClientIP: true, Enabled: true}}
+	c, _ = Build(in)
+	if c.LANExitVia != "" || !c.LANExitDown {
+		t.Fatalf("conflict not caught: via=%q down=%v", c.LANExitVia, c.LANExitDown)
+	}
+	// Not capable (Windows): ignored, nothing blocked.
+	in = lanExitInput(true)
+	in.LANExitCapable = false
+	if c, _ = Build(in); c.LANExitVia != "" || c.LANExitDown || len(c.LANExitSrcs) != 0 {
+		t.Fatalf("incapable platform: %+v", c)
+	}
+}
+
+// Two exits: the preferred one dies, traffic moves to the other; with both
+// dead an "exit only" phone is blocked, otherwise it uses its own line.
+func TestExitFailover(t *testing.T) {
+	p := phone
+	p.ExitVia = "vps"
+	v, v2 := vps, model.Node{ID: "vps2", Name: "vps2", Kind: model.NodeServer, Relay: true, Exit: true, PublicKey: "Kv2",
+		MeshIP: "100.88.0.9", Endpoints: []string{"2.2.2.2:51820"}}
+	v.Exit = true
+	in := Input{Network: network, Self: p, Nodes: []model.Node{p, home, v, v2}, ExitCapable: true,
+		Paths: pathsel.Result{
+			Paths: map[string]pathsel.Path{"home": {Via: "vps"}, "vps": {Endpoint: "1.1.1.1:51820"}, "vps2": {Endpoint: "2.2.2.2:51820"}},
+			Up:    map[string]bool{"home": true, "vps": false, "vps2": true}}}
+	c, _ := Build(in)
+	if c.ExitVia != "vps2" || !strings.Contains(ips(peer(t, c, "vps2")), "0.0.0.0/0") || strings.Contains(ips(peer(t, c, "vps")), "0.0.0.0/0") {
+		t.Fatalf("no failover: exit=%q", c.ExitVia)
+	}
+	in.Paths.Up["vps2"] = false
+	c, _ = Build(in)
+	if c.ExitVia != "" || c.ExitBlocked {
+		t.Fatalf("all down, not exit-only: exit=%q blocked=%v", c.ExitVia, c.ExitBlocked)
+	}
+	for _, r := range c.Routes {
+		if r.Bits() == 0 {
+			t.Fatal("default route kept although the phone should use its own line")
+		}
+	}
+	in.Self.ExitOnly = true
+	c, _ = Build(in)
+	if !c.ExitBlocked || strings.Contains(ips(peer(t, c, "vps"))+ips(peer(t, c, "vps2")), "0.0.0.0/0") {
+		t.Fatalf("all down, exit-only: blocked=%v", c.ExitBlocked)
+	}
+	if c.Routes[0].Bits() != 0 {
+		t.Fatalf("exit-only must keep internet traffic in the tunnel (dropped there): %v", c.Routes)
+	}
+	// LAN exits fail over the same way.
+	h := home
+	h.LANExits = []model.LANExit{{Src: "192.168.1.205", Via: "vps"}}
+	in = Input{Network: network, Self: h, Nodes: []model.Node{phone, h, v, v2}, LANExitCapable: true, Paths: pathsel.Result{
+		Paths: map[string]pathsel.Path{"vps": {Endpoint: "1.1.1.1:51820"}, "vps2": {Endpoint: "2.2.2.2:51820"}, "phone": {Via: "vps2"}},
+		Up:    map[string]bool{"vps": false, "vps2": true}}}
+	if c, _ = Build(in); c.LANExitVia != "vps2" {
+		t.Fatalf("LAN exit did not fail over: %q", c.LANExitVia)
+	}
+}
+
+func TestExitPermissions(t *testing.T) {
+	p := phone
+	p.ExitVia, p.ExitsAllowed = "vps", []string{"vps2"} // admin default not allowed: ignored
+	v, v2 := vps, model.Node{ID: "vps2", Name: "vps2", Kind: model.NodeServer, Relay: true, Exit: true, PublicKey: "Kv2",
+		MeshIP: "100.88.0.9", Endpoints: []string{"2.2.2.2:51820"}}
+	v.Exit = true
+	in := Input{Network: network, Self: p, Nodes: []model.Node{p, home, v, v2}, ExitCapable: true, ExitChoice: "vps",
+		Paths: pathsel.Result{Paths: map[string]pathsel.Path{"home": {Via: "vps"}, "vps": {Endpoint: "1.1.1.1:51820"}, "vps2": {Endpoint: "2.2.2.2:51820"}}}}
+	if c, _ := Build(in); c.ExitVia != "vps2" {
+		t.Fatalf("used %q; only vps2 is allowed", c.ExitVia)
+	}
+	in.Paths.Up = map[string]bool{"vps": true, "vps2": false}
+	if c, _ := Build(in); c.ExitVia != "" {
+		t.Fatalf("failed over to a forbidden exit %q", c.ExitVia)
+	}
+	in.ExitChoice, in.Self.ExitsAllowed = "off", []string{"*"}
+	in.Paths.Up = nil
+	if c, _ := Build(in); c.ExitVia != "" {
+		t.Fatalf("own connection chosen but exit %q used", c.ExitVia)
+	}
+	in.ExitChoice = "vps2"
+	if c, _ := Build(in); c.ExitVia != "vps2" {
+		t.Fatalf("device's own pick ignored: %q", c.ExitVia)
+	}
+}

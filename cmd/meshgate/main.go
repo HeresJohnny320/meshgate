@@ -38,6 +38,7 @@ Usage:
   meshgate diag ping|trace|tcp|udp|http <target> [port]  test connectivity from this node
   meshgate service install|uninstall  run at boot (Windows service; systemd/rc.d are set up by the installer)
   meshgate leave                stop and remove meshgate config from this machine
+  meshgate update [--check]     install the latest release (checksum-verified) and restart
   meshgate version
 
 Global flags:
@@ -78,6 +79,8 @@ func main() {
 		err = cmdPfSense(cfgPath, rest)
 	case "diag":
 		err = cmdDiag(cfgPath, rest)
+	case "update":
+		err = cmdUpdate(rest)
 	case "service":
 		err = cmdService(cfgPath, rest)
 	case "ports":

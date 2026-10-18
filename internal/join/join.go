@@ -72,6 +72,41 @@ func VisibleTo(kind model.NodeKind, key string) bool {
 	return k == model.KindNetwork || k == model.KindNode || k == model.KindStatus
 }
 
+// FilterFor keeps what node n may see. Besides Filter's records, a client
+// sees the access rules that name it (or apply to every device), so its app
+// can show what it may reach; any other rule reaches it only as a deletion,
+// which also removes a rule that stopped applying to it.
+func FilterFor(n model.Node, in []store.Entry) []store.Entry {
+	if n.Kind == model.NodeServer {
+		return in
+	}
+	out := Filter(n.Kind, in)
+	for _, e := range in {
+		if k, _ := model.SplitKey(e.Key); k != model.KindACL {
+			continue
+		}
+		var a model.ACL
+		if !e.Deleted && json.Unmarshal(e.Value, &a) == nil && aclNames(a, n.ID) {
+			out = append(out, e)
+			continue
+		}
+		out = append(out, store.Entry{Key: e.Key, Deleted: true, Version: e.Version, Origin: e.Origin, Seq: e.Seq})
+	}
+	return out
+}
+
+func aclNames(a model.ACL, id string) bool {
+	if len(a.From) == 0 {
+		return true
+	}
+	for _, f := range a.From {
+		if f == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Filter keeps entries visible to kind.
 func Filter(kind model.NodeKind, in []store.Entry) []store.Entry {
 	if kind == model.NodeServer {
@@ -201,7 +236,7 @@ func register(s *store.Store, req Request, now time.Time, consume func() error) 
 
 func snapshot(s *store.Store, n model.Node, netw model.Network) Response {
 	all, _ := s.Since(0)
-	return Response{Node: n, Network: netw, Entries: Filter(n.Kind, all)}
+	return Response{Node: n, Network: netw, Entries: FilterFor(n, all)}
 }
 
 // AllocateIP picks a random free address in the mesh. Random allocation
@@ -284,7 +319,7 @@ func Handler(s *store.Store) http.Handler {
 		s.Merge(accepted)
 		entries, seq := s.Since(req.Since)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ClientSync{Entries: Filter(node.Kind, entries), Since: seq})
+		json.NewEncoder(w).Encode(ClientSync{Entries: FilterFor(node, entries), Since: seq})
 	})
 	return mux
 }

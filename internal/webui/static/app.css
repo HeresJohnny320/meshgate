@@ -58,6 +58,8 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
 .form-grid .full { grid-column: 1 / -1; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+fieldset.lan-exit { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 2px; margin: 0 0 12px; }
+fieldset.lan-exit legend { padding: 0 6px; color: var(--text); font-size: 14px; }
 h2.gap { margin-top: 24px; }
 .busy { color: var(--warn); font-weight: 600; }
 .out-pre { margin-top: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }

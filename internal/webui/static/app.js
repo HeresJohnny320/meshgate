@@ -179,6 +179,15 @@ async function refreshTraffic() {
 
 // ---------- rendering ----------
 
+// newer(cur, latest): whether release latest (vX.Y.Z) is newer than cur.
+function newer(cur, latest) {
+  const p = (v) => /^v?(\d+)\.(\d+)\.(\d+)$/.exec(v || "")?.slice(1).map(Number);
+  const a = p(cur), b = p(latest);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return b[i] > a[i];
+  return false;
+}
+
 const nodeName = (id) => view.nodes.find((n) => n.value.id === id)?.value.name || id;
 const servers = () => view.nodes.filter((n) => n.value.kind === "server").map((n) => n.value);
 const relays = () => servers().filter((n) => n.relay && (n.endpoints || []).length);
@@ -257,17 +266,34 @@ function renderNodes(rt) {
     }
     const roles = [n.kind, n.relay ? "relay" : "", n.exit ? "exit node" : "", n.webui ? "web ui" : "",
       n.test_port ? "test :" + n.test_port : "",
-      n.exit_via ? "internet via " + nodeName(n.exit_via) : ""].filter(Boolean).map((r) => `<span class="chip">${esc(r)}</span>`).join(" ");
+      n.exit_via ? "internet via " + nodeName(n.exit_via) + (n.exit_only ? " only" : "") : "",
+      (n.exits_allowed || []).length ? "may use: " + (n.exits_allowed.includes("*") ? "any exit" : n.exits_allowed.map(nodeName).join(", ")) : "",
+      (n.lan_exits || []).length ? `LAN exit: ${n.lan_exits.length} → ${nodeName(n.lan_exits[0].via)}` : ""].filter(Boolean).map((r) => `<span class="chip">${esc(r)}</span>`).join(" ");
+    const st = view.statuses?.[n.id] || {}, latest = rt.latest || "";
+    const isPhone = st.os === "android" || st.os === "ios";
+    const outdated = latest && newer(st.version, latest);
+    const version = `<span class="mono">${esc(st.version || "?")}</span>` + (outdated
+      ? ` <span class="chip local">${isPhone ? "update in the app" : "update available"}</span>` : "");
+    const updBtn = outdated && !isPhone && n.kind !== "static" ? `<button class="small" data-update="${esc(n.id)}">Update</button>` : "";
     return `<tr>
-      <td><b>${esc(n.name)}</b>${localChip(it)}</td><td>${roles}</td><td class="mono">${esc(n.mesh_ip)}</td>
+      <td><b>${esc(n.name)}</b>${localChip(it)}</td><td>${roles}</td><td>${version}</td><td class="mono">${esc(n.mesh_ip)}</td>
       <td>${state}</td><td>${path}</td><td>${hs}</td>
       <td class="mono">${esc(p?.endpoint || "")}</td>
       <td>${p ? bytes(p.rx_bytes) + " / " + bytes(p.tx_bytes) : ""}</td>
       <td class="mono">${esc((n.routes || []).join(", "))}${(n.routes || []).length ? ({ restricted: ' <span class="chip local">restricted</span>', firewall: ' <span class="chip local">pfSense rules</span>' }[n.lan_policy] || ' <span class="chip">open</span>') : ""}</td>
-      <td class="actions"><button class="small" data-edit-node="${esc(n.id)}">Edit</button>
+      <td class="actions">${updBtn}<button class="small" data-edit-node="${esc(n.id)}">Edit</button>
         ${n.id !== view.self_id ? `<button class="small danger" data-del="node:${esc(n.id)}">Remove</button>` : ""}</td></tr>`;
   });
-  $("#nodes").innerHTML = `<tr><th>Name</th><th>Role</th><th>Mesh IP</th><th>State</th><th>Path</th><th>Handshake</th><th>Endpoint</th><th>Rx / Tx</th><th>Shared subnets / policy</th><th></th></tr>` + rows.join("");
+  const latest = rt.latest || "";
+  const behind = view.nodes.filter(({ value: n }) => {
+    const st = view.statuses?.[n.id] || {};
+    return latest && newer(st.version, latest) && st.os !== "android" && st.os !== "ios" && n.kind !== "static";
+  });
+  $("#updates").innerHTML = latest
+    ? (behind.length ? `Release <b>${esc(latest)}</b> is out; ${behind.length} node${behind.length > 1 ? "s" : ""} can update.
+        <button class="small" id="update-all">Update all</button>` : `All nodes run the latest release (${esc(latest)}) or newer.`)
+    : "";
+  $("#nodes").innerHTML = `<tr><th>Name</th><th>Role</th><th>Version</th><th>Mesh IP</th><th>State</th><th>Path</th><th>Handshake</th><th>Endpoint</th><th>Rx / Tx</th><th>Shared subnets / policy</th><th></th></tr>` + rows.join("");
 }
 
 function renderForwards() {
@@ -446,13 +472,28 @@ function nodeDialog(it) {
   const relayField = n.kind === "static"
     ? `<label class="full">Connects through relay <select name="via_relay">${nodeOptions(relays(), n.via_relay)}</select></label>`
     : n.kind === "client"
-    ? `<label class="full">Internet traffic away from home <select name="exit_via">${exitOptions}</select></label>
-       <p class="hint full">Through an exit node, websites see that node's IP instead of the device's network. At home the device uses your own connection. Supported in the phone app.</p>`
+    ? `<fieldset class="full lan-exit"><legend>May use exit nodes (the device picks among these in its app)</legend>
+         <label class="inline"><input type="checkbox" name="exits_any" ${(n.exits_allowed || []).includes("*") ? "checked" : ""}> Any exit node, including ones added later</label>
+         ${exits().filter((x) => x.id !== n.id).map((x) => `<label class="inline"><input type="checkbox" name="exits_allowed" value="${esc(x.id)}"
+           ${(n.exits_allowed || []).includes(x.id) ? "checked" : ""}> ${esc(x.name)}</label>`).join("") || '<p class="hint">No exit nodes yet: tick "Exit node" on a VPS first.</p>'}
+       </fieldset>
+       <label class="full">Default: internet traffic away from home <select name="exit_via">${exitOptions}</select></label>
+       <label class="inline full"><input type="checkbox" name="exit_only" ${n.exit_only ? "checked" : ""}> Exit only: if no exit node is reachable, block internet instead of using the device's own connection</label>
+       <p class="hint full">Through an exit node, websites see that node's IP instead of the device's network. If it goes down, the device moves to another exit node automatically; <i>Exit only</i> decides what happens when none is left. At home the device uses your own connection. Supported in the phone app.</p>`
     : `<label class="full">Endpoints (host:port, one per line — public IP/DNS, LAN IP, router port-forward)
         <textarea name="endpoints" rows="3">${esc((n.endpoints || []).join("\n"))}</textarea></label>
        <label class="full">Shared LAN subnets (one per line) <textarea name="routes" rows="2">${esc((n.routes || []).join("\n"))}</textarea></label>
        <label class="inline full"><input type="checkbox" name="relay" ${n.relay ? "checked" : ""}> Relay (public endpoint reachable from anywhere)</label>
        <label class="inline full"><input type="checkbox" name="exit" ${n.exit ? "checked" : ""}> Exit node (devices you pick send their internet traffic out through this node)</label>
+       <fieldset class="full lan-exit"><legend>Send LAN devices' internet through an exit node</legend>
+         <label>IPs or subnets behind this router, one per line (e.g. 192.168.1.205, 192.168.20.0/24 for a VLAN)
+           <textarea name="lan_exit_src" rows="3">${esc((n.lan_exits || []).map((e) => e.src).join("\n"))}</textarea></label>
+         <label>Through <select name="lan_exit_via">${exits().filter((x) => x.id !== n.id)
+           .map((x) => `<option value="${esc(x.id)}" ${(n.lan_exits || [])[0]?.via === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")
+           || '<option value="">(no exit node yet — tick "Exit node" on a VPS first)</option>'}</select></label>
+         <label class="inline"><input type="checkbox" name="exit_only" ${n.exit_only ? "checked" : ""}> Exit only: if no exit node is reachable, block their internet instead of using your normal connection</label>
+         <p class="hint">Their internet traffic leaves through the exit (websites see its IP); if it goes down they move to
+           another exit node automatically. Your LAN and mesh stay reachable.</p></fieldset>
        <label class="inline full"><input type="checkbox" name="app_admin" ${n.app_admin_off ? "" : "checked"}> Phone app may manage the mesh through this node</label>
        <label class="full">Test service port (TCP+UDP, empty = off; see Tools) <input name="test_port" type="number" min="1" max="65535" value="${n.test_port || ""}" placeholder="off"></label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
@@ -466,9 +507,14 @@ function nodeDialog(it) {
       const lines = (k) => (fd.get(k) || "").split("\n").map((s) => s.trim()).filter(Boolean);
       const patch = { name: fd.get("name") };
       if (n.kind === "static") patch.via_relay = fd.get("via_relay");
-      else if (n.kind === "client") patch.exit_via = fd.get("exit_via");
+      else if (n.kind === "client") {
+        const allowed = fd.get("exits_any") === "on" ? ["*"] : fd.getAll("exits_allowed");
+        if (fd.get("exit_via") && !allowed.includes("*") && !allowed.includes(fd.get("exit_via"))) allowed.push(fd.get("exit_via"));
+        Object.assign(patch, { exit_via: fd.get("exit_via"), exit_only: fd.get("exit_only") === "on", exits_allowed: allowed });
+      }
       else Object.assign(patch, { endpoints: lines("endpoints"), routes: lines("routes"), relay: fd.get("relay") === "on",
-        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0, app_admin: fd.get("app_admin") === "on" });
+        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0, app_admin: fd.get("app_admin") === "on",
+        lan_exits: lines("lan_exit_src").map((src) => ({ src, via: fd.get("lan_exit_via") })), exit_only: fd.get("exit_only") === "on" });
       await api("/api/node", { id: n.id, patch, scope: fd.get("scope") });
     });
 }
@@ -483,6 +529,18 @@ document.addEventListener("click", async (e) => {
   if (t.dataset.editFwd) return forwardDialog(view.forwards.find((x) => x.value.id === t.dataset.editFwd));
   if (t.dataset.editRoute) return routeDialog(view.routes.find((x) => x.value.id === t.dataset.editRoute));
   if (t.dataset.editNode) return nodeDialog(view.nodes.find((x) => x.value.id === t.dataset.editNode));
+  if (t.dataset.update || t.id === "update-all") {
+    const latest = view.runtime?.latest || "";
+    const ids = t.dataset.update ? [t.dataset.update] : view.nodes.filter(({ value: n }) => {
+      const st = view.statuses?.[n.id] || {};
+      return newer(st.version, latest) && st.os !== "android" && st.os !== "ios" && n.kind !== "static";
+    }).map((x) => x.value.id).sort((a) => (a === view.self_id ? 1 : -1)); // this node last: it restarts
+    t.disabled = true;
+    for (const id of ids) {
+      try { const r = await api("/api/update", { node: id }); toast(r.message); } catch (err) { toast(nodeName(id) + ": " + err.message); }
+    }
+    return;
+  }
   if (t.dataset.toggle) {
     const [kind, id, on] = t.dataset.toggle.split(":");
     try { await api("/api/toggle", { kind, id, enabled: on === "1" }); refresh(); toast(on === "1" ? "Enabled" : "Disabled"); } catch (err) { toast(err.message); }

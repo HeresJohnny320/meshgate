@@ -94,6 +94,20 @@ type Node struct {
 	// ExitVia is the exit node this device uses for internet traffic while
 	// it is away from home ("" = its own connection).
 	ExitVia string `json:"exit_via,omitempty"`
+	// LANExits sends the internet traffic of LAN devices behind this router
+	// (pfSense or a Linux subnet router) out through an exit node. Their
+	// internet access then depends on that exit: if it is unreachable they
+	// get none, rather than leaking out of the home connection.
+	LANExits []LANExit `json:"lan_exits,omitempty"`
+	// ExitsAllowed lists the exit nodes this device may use ("*" = any).
+	// Exit nodes only pass internet traffic for allowed devices; the device
+	// picks among them itself (ExitVia is the admin's default). Empty with
+	// ExitVia set means any exit (as before permissions existed).
+	ExitsAllowed []string `json:"exits_allowed,omitempty"`
+	// ExitOnly: when no exit node is reachable (the chosen one and every
+	// other exit it could fail over to), block internet for this device /
+	// its LAN exits instead of using the normal connection.
+	ExitOnly bool `json:"exit_only,omitempty"`
 	// AppAdminOff stops this server from answering the phone app's
 	// management requests (by default every server does, so the app keeps
 	// working when one is down).
@@ -418,4 +432,40 @@ func CheckEndpoint(ep string) error {
 		return fmt.Errorf("endpoint %q: bad host", ep)
 	}
 	return nil
+}
+
+// LANExit is one LAN device or subnet whose internet traffic leaves through
+// exit node Via.
+type LANExit struct {
+	Src string `json:"src"` // "192.168.1.205" or "192.168.20.0/24"
+	Via string `json:"via"` // exit node ID
+}
+
+// Prefix parses Src as an IPv4 address or subnet.
+func (e LANExit) Prefix() (netip.Prefix, error) {
+	if p, err := netip.ParsePrefix(e.Src); err == nil && p.Addr().Is4() {
+		return p.Masked(), nil
+	}
+	a, err := netip.ParseAddr(e.Src)
+	if err != nil || !a.Is4() {
+		return netip.Prefix{}, fmt.Errorf("%q: want an IPv4 address or subnet", e.Src)
+	}
+	return netip.PrefixFrom(a, 32), nil
+}
+
+// MayUseExit reports whether n may send internet traffic through exit node
+// ex (LAN exits on routers are set by admins and always allowed).
+func (n Node) MayUseExit(ex string) bool {
+	if len(n.LANExits) > 0 {
+		return true
+	}
+	if len(n.ExitsAllowed) == 0 {
+		return n.ExitVia != ""
+	}
+	for _, a := range n.ExitsAllowed {
+		if a == "*" || a == ex {
+			return true
+		}
+	}
+	return false
 }

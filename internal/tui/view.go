@@ -177,7 +177,7 @@ func (m *model_) footer(width int) string {
 	keys := []key{{"UP/DOWN", "select"}, {"TAB", "section"}}
 	switch m.tab {
 	case tabNodes:
-		keys = append(keys, key{"E", "edit"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
+		keys = append(keys, key{"E", "edit"}, key{"U", "update"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
 	case tabForwards, tabHTTPS, tabRules:
 		keys = append(keys, key{"A", "add"}, key{"E", "edit"}, key{"T", "on/off"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
 	case tabDevices:
@@ -215,7 +215,7 @@ func (m *model_) card(i, width int) string {
 	case tabNodes:
 		it := m.v.Nodes[i]
 		n := it.Value
-		l1 = marker + m.nodeState(n) + "  " + nameStyle(sel).Render(n.Name) + "  " + mutedStyle.Render(roles(n)) + localTag(it.Local)
+		l1 = marker + m.nodeState(n) + "  " + nameStyle(sel).Render(n.Name) + "  " + mutedStyle.Render(m.roles(n)) + localTag(it.Local)
 		p := m.v.Runtime.Peers[n.ID]
 		path, hs := "this node", ""
 		if n.ID != m.v.SelfID {
@@ -392,13 +392,30 @@ func (m *model_) aclTarget(a model.ACL) string {
 	return a.To
 }
 
-func roles(n model.Node) string {
+func (m *model_) roles(n model.Node) string {
 	r := []string{string(n.Kind)}
 	if n.Relay {
 		r = append(r, "relay")
 	}
+	if n.Exit {
+		r = append(r, "exit node")
+	}
 	if n.WebUI {
 		r = append(r, "web ui")
+	}
+	// Permissions: the exit nodes this device may use.
+	var may []string
+	for _, a := range n.ExitsAllowed {
+		if a == "*" {
+			may = []string{"any exit"}
+			break
+		}
+		may = append(may, m.name(a))
+	}
+	if len(may) > 0 {
+		r = append(r, "may use "+strings.Join(may, "/"))
+	} else if n.ExitVia != "" {
+		r = append(r, "exit via "+m.name(n.ExitVia))
 	}
 	return "[" + strings.Join(r, ", ") + "]"
 }

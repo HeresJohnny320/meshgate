@@ -43,6 +43,8 @@ type Runtime struct {
 	Userspace  bool                   `json:"userspace"`
 	StartedAt  time.Time              `json:"started_at"`
 	ProxyError string                 `json:"proxy_error,omitempty"`
+	// Latest is the newest meshgate release (checked every few hours).
+	Latest string `json:"latest,omitempty"`
 }
 
 // Service implements the operations.
@@ -52,6 +54,9 @@ type Service struct {
 	Runtime func() Runtime
 	// Traffic gathers live traffic from every server (nil: not available).
 	Traffic func() []traffic.Node
+	// Update makes node update itself to the latest release (nil: not
+	// available here).
+	Update func(node string) (string, error)
 }
 
 // Item wraps a record with its local-override flag.
@@ -264,16 +269,19 @@ func validPort(p int) bool { return p > 0 && p < 65536 }
 
 // NodePatch is the editable part of a node.
 type NodePatch struct {
-	Name      *string   `json:"name,omitempty"`
-	Endpoints *[]string `json:"endpoints,omitempty"`
-	Routes    *[]string `json:"routes,omitempty"`
-	Relay     *bool     `json:"relay,omitempty"`
-	ViaRelay  *string   `json:"via_relay,omitempty"`
-	LANPolicy *string   `json:"lan_policy,omitempty"`
-	Exit      *bool     `json:"exit,omitempty"`
-	ExitVia   *string   `json:"exit_via,omitempty"`
-	TestPort  *int      `json:"test_port,omitempty"`
-	AppAdmin  *bool     `json:"app_admin,omitempty"`
+	Name         *string          `json:"name,omitempty"`
+	Endpoints    *[]string        `json:"endpoints,omitempty"`
+	Routes       *[]string        `json:"routes,omitempty"`
+	Relay        *bool            `json:"relay,omitempty"`
+	ViaRelay     *string          `json:"via_relay,omitempty"`
+	LANPolicy    *string          `json:"lan_policy,omitempty"`
+	Exit         *bool            `json:"exit,omitempty"`
+	ExitVia      *string          `json:"exit_via,omitempty"`
+	TestPort     *int             `json:"test_port,omitempty"`
+	AppAdmin     *bool            `json:"app_admin,omitempty"`
+	LANExits     *[]model.LANExit `json:"lan_exits,omitempty"`
+	ExitOnly     *bool            `json:"exit_only,omitempty"`
+	ExitsAllowed *[]string        `json:"exits_allowed,omitempty"`
 }
 
 // UpdateNode edits a node.
@@ -316,6 +324,47 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.Exit != nil {
 		n.Exit = *p.Exit && n.Kind == model.NodeServer
+	}
+	if p.LANExits != nil {
+		via := ""
+		for i, e := range *p.LANExits {
+			pfx, err := e.Prefix()
+			if err != nil {
+				return n, fmt.Errorf("LAN exit: %v", err)
+			}
+			if netw, ok := store.Get[model.Network](s.Store, model.Key(model.KindNetwork, "main")); ok {
+				if mesh, err := netw.Prefix(); err == nil && mesh.Overlaps(pfx) {
+					return n, fmt.Errorf("LAN exit %s: that is the mesh range, not a LAN", e.Src)
+				}
+			}
+			ex, ok := store.Get[model.Node](s.Store, model.Key(model.KindNode, e.Via))
+			if !ok || !ex.Exit || e.Via == id {
+				return n, fmt.Errorf("LAN exit %s: pick a node offered as an exit node", e.Src)
+			}
+			if via != "" && e.Via != via {
+				return n, errors.New("a router can send LAN devices through one exit node at a time")
+			}
+			via = e.Via
+			(*p.LANExits)[i].Src = pfx.String()
+		}
+		if len(*p.LANExits) > 0 && n.Kind != model.NodeServer {
+			return n, errors.New("LAN exits are set on the router (a server node that shares the LAN)")
+		}
+		n.LANExits = *p.LANExits
+	}
+	if p.ExitsAllowed != nil {
+		for _, a := range *p.ExitsAllowed {
+			if a == "*" {
+				continue
+			}
+			if ex, ok := store.Get[model.Node](s.Store, model.Key(model.KindNode, a)); !ok || !ex.Exit {
+				return n, fmt.Errorf("allowed exit %q is not an exit node", a)
+			}
+		}
+		n.ExitsAllowed = *p.ExitsAllowed
+	}
+	if p.ExitOnly != nil {
+		n.ExitOnly = *p.ExitOnly
 	}
 	if p.AppAdmin != nil {
 		n.AppAdminOff = !*p.AppAdmin
@@ -487,6 +536,19 @@ func (s *Service) Handler(prefix string) http.Handler {
 		})
 	}
 	route("GET view", func(r *http.Request) (any, error) { return s.View(), nil })
+	route("POST update", func(r *http.Request) (any, error) {
+		var b struct {
+			Node string `json:"node"`
+		}
+		if err := decode(r, &b); err != nil {
+			return nil, err
+		}
+		if s.Update == nil {
+			return nil, errors.New("updates are not available here")
+		}
+		msg, err := s.Update(b.Node)
+		return map[string]string{"message": msg}, err
+	})
 	route("GET traffic", func(r *http.Request) (any, error) {
 		if s.Traffic == nil {
 			return []traffic.Node{}, nil

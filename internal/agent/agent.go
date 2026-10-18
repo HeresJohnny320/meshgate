@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -30,6 +31,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/ops"
 	"github.com/heresjohnny320/meshgate/internal/pathsel"
+	"github.com/heresjohnny320/meshgate/internal/pfsense"
 	"github.com/heresjohnny320/meshgate/internal/probe"
 	"github.com/heresjohnny320/meshgate/internal/proxy"
 	"github.com/heresjohnny320/meshgate/internal/store"
@@ -85,7 +87,7 @@ func New(cfg config.Node) (*Agent, error) {
 		proxy:     &proxy.Proxy{StorageDir: cfg.CertMagicDir()},
 		startedAt: time.Now(),
 	}
-	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic}
+	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic, Update: a.Update}
 	return a, nil
 }
 
@@ -170,6 +172,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		mux := http.NewServeMux()
 		mux.Handle("/", a.sync.Handler())
 		mux.HandleFunc("GET /v1/traffic", a.serveTraffic)
+		mux.HandleFunc("POST /v1/update", a.serveUpdate)
 		mux.Handle("/admin/", webui.AppAPI(a.ops, func() bool {
 			s, err := a.self()
 			return err != nil || s.AppAdminOff
@@ -197,6 +200,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	go a.sync.Run(ctx)
 	if self.Kind == model.NodeServer {
 		go a.trafficLoop(ctx)
+		go a.latestLoop(ctx)
+	}
+	if fw.IsPfSense() && pfsense.Installed() {
+		// After an update: bring VPN > meshgate's pages to this version.
+		if err := pfsense.WriteFiles(webui.Static(), a.Cfg.Socket, Version); err != nil {
+			log.Printf("pfsense gui: %v", err)
+		}
 	}
 
 	changes := a.Store.Subscribe()
@@ -272,7 +282,8 @@ func (a *Agent) reconcile(ctx context.Context) {
 
 	cfg, err := meshcfg.Build(meshcfg.Input{
 		Network: netw, Self: self, Nodes: nodes, Forwards: forwards, Paths: res,
-		LocalAddrs: wg.LocalAddrs(a.Cfg.Iface),
+		LocalAddrs:     wg.LocalAddrs(a.Cfg.Iface),
+		LANExitCapable: runtime.GOOS == "linux" || runtime.GOOS == "freebsd",
 	})
 	if err != nil {
 		a.warnings = []string{err.Error()}
@@ -298,7 +309,8 @@ func (a *Agent) reconcile(ctx context.Context) {
 			ACLs: store.List[model.ACL](a.Store, model.KindACL), PreserveEdge: cfg.DefaultViaPeer,
 			WGPort: listen, ProbePort: listen + probe.Offset, MeshPort: a.Cfg.MeshPort,
 			JoinPort: joinPort(a.Cfg.JoinListen), WebPort: webPort(a.Cfg.WebListen), WANIface: fw.DetectWAN(),
-			TestPort: self.TestPort,
+			TestPort:    self.TestPort,
+			LANExitSrcs: prefixStrings(cfg.LANExitSrcs), LANExitGW: meshIPOf(nodes, cfg.LANExitVia), LANExitDown: cfg.LANExitDown,
 		})
 		warn = append(warn, plan.Warnings...)
 		if runtime.GOOS == "windows" {
@@ -483,7 +495,7 @@ func (a *Agent) Runtime() ops.Runtime {
 	prev, warnings, cfg := a.prev, append([]string(nil), a.warnings...), a.lastWG
 	a.mu.Unlock()
 	rt := ops.Runtime{Peers: map[string]ops.PeerRuntime{}, Warnings: warnings, LastSync: a.sync.LastContact(),
-		Userspace: a.wg.Userspace, StartedAt: a.startedAt}
+		Userspace: a.wg.Userspace, StartedAt: a.startedAt, Latest: latestRelease()}
 	stats := a.wg.Stats()
 	if prev != nil {
 		rt.HomeRelay = prev.HomeRelay
@@ -545,4 +557,21 @@ func serve(ctx context.Context, addr string, h http.Handler, tc *tls.Config) err
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); srv.Close() }()
 	return srv.Serve(l)
+}
+
+func prefixStrings(ps []netip.Prefix) []string {
+	var out []string
+	for _, p := range ps {
+		out = append(out, p.String())
+	}
+	return out
+}
+
+func meshIPOf(nodes []model.Node, id string) string {
+	for _, n := range nodes {
+		if n.ID == id {
+			return n.MeshIP
+		}
+	}
+	return ""
 }

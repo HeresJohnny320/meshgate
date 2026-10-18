@@ -41,8 +41,19 @@ type Config struct {
 	Home bool
 	// ExitVia is the exit node now carrying this device's internet traffic
 	// (Routes then include 0.0.0.0/0); "" while at home or without one.
-	ExitVia  string
-	Warnings []string
+	ExitVia string
+	// ExitBlocked: no exit node reachable and the device is "exit only":
+	// 0.0.0.0/0 still enters the tunnel, where no peer takes it, so its
+	// internet traffic (DNS included) is dropped.
+	ExitBlocked bool
+	// LANExitSrcs are LAN devices/subnets behind this router whose internet
+	// traffic goes to exit node LANExitVia (whose peer then holds
+	// 0.0.0.0/0). LANExitDown: configured but the exit is not usable, so
+	// their internet is blocked instead (never leaks out the home line).
+	LANExitSrcs []netip.Prefix
+	LANExitVia  string
+	LANExitDown bool
+	Warnings    []string
 }
 
 // Input for Build.
@@ -61,6 +72,13 @@ type Input struct {
 	// ExitCapable: the platform can send all traffic into the tunnel (the
 	// phone apps). Elsewhere Self.ExitVia only produces a warning.
 	ExitCapable bool
+	// ExitChoice is the device's own pick (phone app): an exit node ID it
+	// is allowed to use, "off" for its own connection, "" for the admin's
+	// default (Self.ExitVia).
+	ExitChoice string
+	// LANExitCapable: the OS layer can policy-route LAN devices into the
+	// mesh (Linux, FreeBSD/pfSense).
+	LANExitCapable bool
 }
 
 // Build computes the config.
@@ -165,27 +183,11 @@ func Build(in Input) (Config, error) {
 			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("preserve-client-IP: edge %s is not directly connected; disabled", edge))
 		}
 	}
-	if ex := in.Self.ExitVia; ex != "" && !cfg.Home {
-		n, ok := byID[ex]
-		p, hasPeer := peers[ex]
-		if n.Name == "" {
-			n.Name = ex
-		}
-		switch {
-		case !in.ExitCapable:
-			cfg.Warnings = append(cfg.Warnings, "exit nodes are only supported in the phone app so far")
-		case !ok || !hasPeer || !n.Exit:
-			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("exit node %s is not offered as an exit any more", n.Name))
-		case !in.Paths.Paths[ex].Direct():
-			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("exit node %s is not directly reachable", n.Name))
-		case cfg.DefaultViaPeer != "":
-			cfg.Warnings = append(cfg.Warnings, "exit node ignored: this node receives real client IPs, which needs the default route")
-		default:
-			all := netip.MustParsePrefix("0.0.0.0/0")
-			p.AllowedIPs = append(p.AllowedIPs, all)
-			cfg.Routes = append(cfg.Routes, all)
-			cfg.ExitVia = ex
-		}
+	if !cfg.Home && (in.Self.ExitVia != "" || in.ExitChoice != "" || len(in.Self.ExitsAllowed) > 0) {
+		cfg.deviceExit(in, byID, peers)
+	}
+	if len(in.Self.LANExits) > 0 {
+		cfg.lanExits(in, byID, peers)
 	}
 	for _, f := range in.Forwards {
 		if f.Enabled && f.PreserveClientIP && f.TargetNode == in.Self.ID && f.EdgeNode != edge {
@@ -243,4 +245,121 @@ func ownRoute(self model.Node, p netip.Prefix) bool {
 		}
 	}
 	return false
+}
+
+// pickExit returns the first usable exit node: preferred, then the others
+// by name (failover). Usable: offered as exit, a peer, reached directly, and
+// answering probes.
+func pickExit(in Input, byID map[string]model.Node, peers map[string]*Peer, preferred string, only string) string {
+	cands := []string{preferred}
+	var others []model.Node
+	for _, n := range in.Nodes {
+		if n.Exit && n.ID != preferred && n.ID != in.Self.ID {
+			others = append(others, n)
+		}
+	}
+	sort.Slice(others, func(i, j int) bool { return others[i].Name < others[j].Name })
+	for _, n := range others {
+		cands = append(cands, n.ID)
+	}
+	for _, id := range cands {
+		n, ok := byID[id]
+		_, hasPeer := peers[id]
+		up := in.Paths.Up == nil || in.Paths.Up[id]
+		if ok && n.Exit && hasPeer && in.Paths.Paths[id].Direct() && up && (only == "" || id == only) && in.Self.MayUseExit(id) {
+			return id
+		}
+	}
+	return ""
+}
+
+func (cfg *Config) name(byID map[string]model.Node, id string) string {
+	if n, ok := byID[id]; ok && n.Name != "" {
+		return n.Name
+	}
+	return id
+}
+
+// deviceExit sends this device's internet traffic to an exit node (phones).
+func (cfg *Config) deviceExit(in Input, byID map[string]model.Node, peers map[string]*Peer) {
+	want := in.Self.ExitVia
+	switch c := in.ExitChoice; {
+	case c == "off":
+		want = ""
+	case c != "" && in.Self.MayUseExit(c):
+		want = c
+	}
+	if want == "" && !in.Self.ExitOnly {
+		return // own connection, by choice
+	}
+	if !in.ExitCapable {
+		cfg.Warnings = append(cfg.Warnings, "exit nodes are only supported in the phone app so far")
+		return
+	}
+	if cfg.DefaultViaPeer != "" {
+		cfg.Warnings = append(cfg.Warnings, "exit node ignored: this node receives real client IPs, which needs the default route")
+		return
+	}
+	all := netip.MustParsePrefix("0.0.0.0/0")
+	ex := ""
+	if want != "" || in.ExitChoice != "off" {
+		ex = pickExit(in, byID, peers, want, "")
+	}
+	if ex == "" {
+		if in.Self.ExitOnly {
+			cfg.ExitBlocked = true
+			cfg.Routes = append(cfg.Routes, all)
+			cfg.Warnings = append(cfg.Warnings, "no exit node is reachable: internet blocked (exit only)")
+		} else {
+			cfg.Warnings = append(cfg.Warnings, "no exit node is reachable ("+cfg.name(byID, want)+" is down): using this device's own connection")
+		}
+		return
+	}
+	if want != "" && ex != want {
+		cfg.Warnings = append(cfg.Warnings, cfg.name(byID, want)+" is down: using exit node "+cfg.name(byID, ex))
+	}
+	peers[ex].AllowedIPs = append(peers[ex].AllowedIPs, all)
+	cfg.Routes = append(cfg.Routes, all)
+	cfg.ExitVia = ex
+}
+
+// lanExits routes LAN devices' internet traffic to one exit node, failing
+// over to other exit nodes; with none left they are blocked (exit only) or
+// use the normal connection.
+func (cfg *Config) lanExits(in Input, byID map[string]model.Node, peers map[string]*Peer) {
+	for _, e := range in.Self.LANExits {
+		if p, err := e.Prefix(); err == nil {
+			cfg.LANExitSrcs = append(cfg.LANExitSrcs, p)
+		}
+	}
+	if !in.LANExitCapable {
+		cfg.Warnings = append(cfg.Warnings, "LAN exits need a Linux or pfSense router")
+		cfg.LANExitSrcs = nil
+		return
+	}
+	want := in.Self.LANExits[0].Via
+	// Only one peer can hold 0.0.0.0/0: with real client IPs arriving
+	// through an edge, that edge is the only possible exit.
+	ex := pickExit(in, byID, peers, want, cfg.DefaultViaPeer)
+	if ex == "" {
+		why := cfg.name(byID, want) + " is not reachable"
+		if cfg.DefaultViaPeer != "" && cfg.DefaultViaPeer != want {
+			why = "this node receives real client IPs through " + cfg.name(byID, cfg.DefaultViaPeer) + ", which must then be the exit"
+		}
+		if in.Self.ExitOnly {
+			cfg.LANExitDown = true
+			cfg.Warnings = append(cfg.Warnings, "LAN exit: "+why+"; those devices have no internet (exit only)")
+		} else {
+			cfg.LANExitSrcs = nil
+			cfg.Warnings = append(cfg.Warnings, "LAN exit: "+why+"; those devices use the normal connection")
+		}
+		return
+	}
+	if ex != want {
+		cfg.Warnings = append(cfg.Warnings, "LAN exit: "+cfg.name(byID, want)+" is down: using exit node "+cfg.name(byID, ex))
+	}
+	if ex != cfg.DefaultViaPeer {
+		peers[ex].AllowedIPs = append(peers[ex].AllowedIPs, netip.MustParsePrefix("0.0.0.0/0"))
+	}
+	cfg.LANExitVia = ex
 }

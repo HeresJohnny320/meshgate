@@ -143,6 +143,16 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "t", " ":
 		m.toggleItem()
 		return m, m.load()
+	case "u":
+		if m.tab == tabNodes && m.rows() > 0 {
+			n := m.v.Nodes[m.sel].Value
+			var out struct{ Message string }
+			if err := m.api.Post("update", map[string]string{"node": n.ID}, &out); err != nil {
+				m.message = "Error: " + err.Error()
+			} else {
+				m.message = out.Message
+			}
+		}
 	case "d", "delete", "x":
 		if label := m.selectedLabel(); label != "" {
 			m.confirm = "Remove " + label + "?"
@@ -456,6 +466,20 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			patch["via_relay"] = v["via"]
 		} else if n.Kind == model.NodeClient {
 			patch["exit_via"] = v["exit_via"]
+			patch["exit_only"] = v["exit_only"] == "true"
+			var allowed []string
+			for _, name := range lines(v["exits_allowed"]) {
+				if name == "*" || name == "any" {
+					allowed = []string{"*"}
+					break
+				}
+				for _, it := range m.v.Nodes {
+					if strings.EqualFold(it.Value.Name, name) {
+						allowed = append(allowed, it.Value.ID)
+					}
+				}
+			}
+			patch["exits_allowed"] = allowed
 		} else if n.Kind == model.NodeServer {
 			patch["endpoints"] = lines(v["endpoints"])
 			patch["routes"] = lines(v["routes"])
@@ -464,6 +488,12 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			tp, _ := strconv.Atoi(strings.TrimSpace(v["test_port"]))
 			patch["test_port"] = tp
 			patch["app_admin"] = v["app_admin"] == "true"
+			var le []model.LANExit
+			for _, src := range lines(v["lan_exit_src"]) {
+				le = append(le, model.LANExit{Src: src, Via: v["lan_exit_via"]})
+			}
+			patch["lan_exits"] = le
+			patch["exit_only"] = v["exit_only"] == "true"
 			patch["lan_policy"] = v["policy"]
 		}
 		return m.api.Post("node", map[string]any{"id": n.ID, "patch": patch, "scope": v["scope"]}, nil)
@@ -476,11 +506,16 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			toggle("exit", "Exit node (devices may use it for internet)", n.Exit).
 			text("test_port", "Test service port (empty = off)", itoa0(n.TestPort), "8099").
 			toggle("app_admin", "Phone app may manage through this node", !n.AppAdminOff).
+			text("lan_exit_src", "LAN devices via exit (IPs/subnets, comma)", lanExitSrcs(n), "192.168.1.205, 192.168.20.0/24").
+			choice("lan_exit_via", "...through exit node", exitChoices(m.exitOptions(n.ID)[1:]), lanExitVia(n)).
+			toggle("exit_only", "...exit only (block if no exit reachable)", n.ExitOnly).
 			choice("policy", "LAN policy", []option{{"open: any mesh device", model.PolicyOpen}, {"restricted: rules only", model.PolicyRestricted}, {"firewall: pfSense rules decide", model.PolicyFirewall}}, policyOf(n))
 	case model.NodeStatic:
 		f.choice("via", "Connects through relay", m.relayOptions(), n.ViaRelay)
 	case model.NodeClient:
-		f.choice("exit_via", "Internet away from home", m.exitOptions(n.ID), n.ExitVia)
+		f.text("exits_allowed", "May use exits (names, comma; * = any)", m.exitNames(n.ExitsAllowed), "vps, vps2").
+			choice("exit_via", "Default internet away from home", m.exitOptions(n.ID), n.ExitVia).
+			toggle("exit_only", "Exit only (block if no exit reachable)", n.ExitOnly)
 	}
 	m.form = f.choice("scope", "Apply to", scopeOptions(m.name(m.v.SelfID)), scopeOf(it.Local)).init()
 }
@@ -600,4 +635,37 @@ func itoa0(n int) string {
 		return ""
 	}
 	return strconv.Itoa(n)
+}
+
+func lanExitSrcs(n model.Node) string {
+	var s []string
+	for _, e := range n.LANExits {
+		s = append(s, e.Src)
+	}
+	return strings.Join(s, ", ")
+}
+
+func lanExitVia(n model.Node) string {
+	if len(n.LANExits) > 0 {
+		return n.LANExits[0].Via
+	}
+	return ""
+}
+
+func exitChoices(o []option) []option {
+	if len(o) == 0 {
+		return []option{{"(no exit node yet)", ""}}
+	}
+	return o
+}
+
+func (m *model_) exitNames(ids []string) string {
+	var s []string
+	for _, id := range ids {
+		if id == "*" {
+			return "*"
+		}
+		s = append(s, m.name(id))
+	}
+	return strings.Join(s, ", ")
 }

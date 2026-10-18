@@ -103,6 +103,8 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "MESHGATE_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning title=APK not release-signed::ANDROID_KEYSTORE_BASE64 is not set, so the APK is signed with a throwaway debug key and cannot update an installed app. See README > Releases."
           fi
       - name: APK
         working-directory: mobile/android

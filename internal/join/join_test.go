@@ -3,6 +3,7 @@ package join
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"net"
 	"net/http/httptest"
 	"strings"
@@ -163,5 +164,28 @@ func TestJoinRejectsBadInput(t *testing.T) {
 		if _, err := Admit(s, req, time.Now()); err == nil {
 			t.Errorf("accepted %+v", req)
 		}
+	}
+}
+
+func TestClientSeesOnlyItsRules(t *testing.T) {
+	enc := func(a model.ACL) store.Entry {
+		b, _ := json.Marshal(a)
+		return store.Entry{Key: model.Key(model.KindACL, a.ID), Value: b, Version: 7, Origin: "srv"}
+	}
+	in := []store.Entry{
+		enc(model.ACL{ID: "mine", From: []string{"phone"}}),
+		enc(model.ACL{ID: "all"}),
+		enc(model.ACL{ID: "other", From: []string{"laptop"}}),
+		{Key: model.Key(model.KindAdmin, "admin"), Value: []byte(`{}`)},
+	}
+	got := map[string]bool{}
+	for _, e := range FilterFor(model.Node{ID: "phone", Kind: model.NodeClient}, in) {
+		if strings.HasPrefix(e.Key, model.KindAdmin) {
+			t.Fatal("admin record sent to a client")
+		}
+		got[e.Key] = e.Deleted
+	}
+	if got["acl/mine"] || got["acl/all"] || !got["acl/other"] {
+		t.Fatalf("visibility wrong (true = sent as deletion): %v", got)
 	}
 }

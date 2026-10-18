@@ -375,3 +375,58 @@ func TestRuleTCPAndUDP(t *testing.T) {
 		}
 	}
 }
+
+func TestLANExitRules(t *testing.T) {
+	i := in(home)
+	i.LANExitSrcs, i.LANExitGW = []string{"192.168.1.205/32", "192.168.20.0/24"}, "100.88.0.1"
+	i.WANIface = "igb0"
+	s := RenderNFT(Build(i))
+	for _, want := range []string{
+		`oifname "mg0" ip saddr { 192.168.1.205/32, 192.168.20.0/24 } ip daddr != { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } masquerade comment "LAN exit"`,
+		`oifname != "mg0" ip saddr { 192.168.1.205/32, 192.168.20.0/24 } ip daddr != { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16 } drop`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in\n%s", want, s)
+		}
+	}
+	nftCheck(t, s)
+	nat, _, filter := RenderPF(Build(i))
+	if !strings.Contains(nat, "nat on mg0 inet from { 192.168.1.205/32, 192.168.20.0/24 } to ! <meshgate_private> -> (mg0:0)") ||
+		!strings.HasPrefix(nat, "table <meshgate_private>") {
+		t.Errorf("pf nat:\n%s", nat)
+	}
+	pass := "pass in quick route-to (mg0 100.88.0.1) inet from { 192.168.1.205/32, 192.168.20.0/24 } to ! <meshgate_private> keep state"
+	block := "block drop in quick inet from { 192.168.1.205/32, 192.168.20.0/24 } to ! <meshgate_private>"
+	if !strings.Contains(filter, pass) || !strings.Contains(filter, block) || strings.Index(filter, pass) > strings.Index(filter, block) {
+		t.Errorf("pf filter:\n%s", filter)
+	}
+	// Exit down: only the block remains (fail closed).
+	i.LANExitDown = true
+	if _, _, f := RenderPF(Build(i)); strings.Contains(f, "route-to") || !strings.Contains(f, block) {
+		t.Errorf("exit down:\n%s", f)
+	}
+	// Exit side: the router's mesh IP may leave through the exit.
+	v := vps
+	v.Exit = true
+	h := home
+	h.LANExits = []model.LANExit{{Src: "192.168.1.205", Via: "vps"}}
+	j := in(v)
+	j.Nodes = []model.Node{v, h, phone}
+	if s := RenderNFT(Build(j)); !strings.Contains(s, "ip saddr { 100.88.0.2 } masquerade") {
+		t.Errorf("exit side lacks router:\n%s", s)
+	}
+}
+
+func TestExitServesOnlyAllowedDevices(t *testing.T) {
+	v := vps
+	v.Exit = true
+	ok, no := phone, laptop
+	ok.ExitsAllowed = []string{"vps"}
+	no.ExitVia, no.ExitsAllowed = "vps", []string{"vps2"}
+	i := in(v)
+	i.Nodes = []model.Node{v, home, ok, no}
+	s := RenderNFT(Build(i))
+	if !strings.Contains(s, "ip saddr { 100.88.0.4 } masquerade") || strings.Contains(s, "100.88.0.5 }") {
+		t.Errorf("exit clients wrong:\n%s", s)
+	}
+}

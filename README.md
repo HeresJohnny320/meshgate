@@ -287,6 +287,7 @@ refresh, `q` quit.
 | `meshgate diag myip \| ping \| trace \| tcp \| udp \| http …` | test connectivity from this node (see [Testing](#testing-that-everything-works)) |
 | `meshgate ports` | ports this node uses |
 | `meshgate leave` | remove meshgate's config from this machine |
+| `meshgate update [--check]` | install the latest release (verified) and restart |
 | `meshgate version` | version |
 
 On Linux run them with `sudo`; on pfSense in the root shell; on Windows in an
@@ -363,7 +364,19 @@ With several VPSs, each device can use a different one.
 1. Web UI → **Nodes** → **Edit** on the VPS → tick *Exit node* (TUI: `1`, `e`).
 2. **Edit** on the phone → *Internet traffic away from home* → *Through vps*.
 
-The phone shows *Internet: through vps* when it's active. Its DNS lookups go
+The phone shows *Internet: through vps* when it's active. If that exit goes
+down, the phone moves to another exit node within seconds. **Exit only**
+(on the phone's Edit) decides what happens when *no* exit is reachable: off
+(default) uses the phone's own connection, on blocks internet until an exit is
+back.
+
+**Kill switch** (in the app, kept on the phone): the same as *Exit only*, but
+you flip it yourself. While meshgate runs, internet only goes through an exit
+node; with none reachable, or if the tunnel can't start, it's blocked. Turning
+meshgate off is your deliberate choice and gives normal internet again. To also
+block while the app is not running at all (crashed, killed), turn on Android's
+*Always-on VPN* + *Block connections without VPN* (the card has a shortcut);
+note that Android then blocks even when you switch meshgate off on purpose. Its DNS lookups go
 through the exit too. At home the phone uses your own connection, and your
 home network stays reachable everywhere. Turn it off again with *Its own
 connection*.
@@ -430,6 +443,45 @@ address yourself:
 
 The phone's public-IP check uses `api.ipify.org`.
 
+### Permissions: which exits a device may use
+
+On a phone or laptop's **Edit**, *May use exit nodes* lists what that device is
+allowed: specific exit nodes, or *any exit node* (including ones added later).
+The exit nodes enforce it: they only pass internet traffic for devices allowed
+to use them. *Default* is the admin's pick; the device can change it itself
+among its allowed exits (app → *Change exit node*), and failover only moves
+between allowed exits. With nothing ticked, a device that has a default exit
+may use any exit (as before).
+
+Each device sees its permissions live in the app (*Your access*): the exit
+nodes it may use with their up/down state, and what it may reach on each
+router (the whole subnet on an open policy, exactly its access rules on a
+restricted one, or "as pfSense's MESHGATE rules allow"). Devices only receive
+the access rules that concern them. In the TUI the node list shows
+`may use vps/vps2`.
+
+### Send LAN devices (VMs, a VLAN) through an exit node
+
+Devices behind your router that don't run meshgate (VMs, consoles, a whole
+VLAN) can also use an exit node:
+
+1. Tick *Exit node* on the VPS (**Nodes → Edit**).
+2. **Edit** on the router that is those devices' gateway (pfSense, or a Linux
+   server sharing the LAN) → *Send LAN devices' internet through an exit node*:
+   one IP or subnet per line (e.g. `192.168.1.205`, `192.168.20.0/24`) and the
+   exit node.
+
+Their internet traffic then leaves through the VPS (websites see its IP),
+while your LAN, other VLANs and mesh devices stay reachable as usual. If the
+exit goes down they move to another exit node automatically; tick *Exit only*
+to block their internet when no exit is left (otherwise they use your normal
+connection). For a VLAN that should *only* reach the internet through the exit,
+tick *Exit only* and block its normal internet access in pfSense as well;
+meshgate's rules come first, so the exit keeps working. One router uses one exit
+node at a time. If those devices use pfSense for DNS, their lookups still leave
+from your home IP; point them at a public resolver (e.g. `1.1.1.1`) to send DNS
+through the exit too.
+
 ### Every change: all nodes or only this node
 
 When you save something you choose **all nodes** (shared with the whole mesh,
@@ -438,18 +490,23 @@ one machine). `c` in the TUI drops a local override again.
 
 ## Update and uninstall
 
-**Update:** run the same install command again (no token needed). It downloads
-the newest release, keeps your settings and restarts meshgate:
+**Update:**
 
-```sh
-# Linux
-curl -fsSL https://raw.githubusercontent.com/heresjohnny320/meshgate/main/scripts/install.sh | sudo sh
-# pfSense (Diagnostics → Command Prompt)
-fetch -qo - https://raw.githubusercontent.com/heresjohnny320/meshgate/main/scripts/install.sh | sh
-```
-
-On Windows rerun the PowerShell command. On Android install the new APK over
-the old one.
+- **One machine:** `sudo meshgate update` (`meshgate update` on pfSense or in an
+  Administrator terminal on Windows). It downloads the latest release, checks it
+  against the release's `SHA256SUMS`, swaps it in and restarts meshgate.
+  `meshgate update --check` only tells you whether one is available.
+- **From the dashboard or the app's Admin:** **Nodes** shows every device's
+  version and marks outdated ones; **Update** updates that node remotely and
+  **Update all** does every outdated server and Linux/Windows client. In the TUI,
+  select a node and press `u`. Only servers can trigger updates, and nodes only
+  ever install the official, checksum-verified release.
+- **Phone:** the app's **Updates** card shows when a new version is out;
+  **Update** downloads and verifies it, then Android asks you to confirm the
+  install (Android never lets apps update silently, so phones can't be updated
+  remotely). This needs the APK release-signed (see *Releases*), otherwise
+  Android refuses to install it over the old one.
+- Running the install command again also still works, and keeps your settings.
 
 **Uninstall:**
 

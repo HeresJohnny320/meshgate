@@ -50,6 +50,10 @@ func (p Path) Direct() bool { return p.Via == "" }
 type Result struct {
 	HomeRelay string          `json:"home_relay,omitempty"`
 	Paths     map[string]Path `json:"paths"`
+	// Up marks peers that answered probes recently (ours to them, or theirs
+	// to us). Relays always get a direct Path, so this is what tells a dead
+	// relay or exit node apart.
+	Up map[string]bool `json:"-"`
 }
 
 // Input is everything the decision depends on.
@@ -77,7 +81,7 @@ func Decide(in Input) Result {
 	}
 	sort.Slice(relays, func(i, j int) bool { return relays[i].ID < relays[j].ID })
 
-	res := Result{Paths: map[string]Path{}}
+	res := Result{Paths: map[string]Path{}, Up: map[string]bool{}}
 	if !IsRelay(in.Self) {
 		res.HomeRelay = pickHomeRelay(in, relays)
 	}
@@ -87,6 +91,13 @@ func Decide(in Input) Result {
 			continue
 		}
 		res.Paths[p.ID] = decideOne(in, byID, relays, res.HomeRelay, p)
+		up := in.Now.Sub(in.Inbound[p.ID]) < InboundFresh
+		for _, ep := range p.Endpoints {
+			if pr, ok := in.Probes[ep]; ok && in.Now.Sub(pr.LastOK) <= ProbeFresh {
+				up = true
+			}
+		}
+		res.Up[p.ID] = up
 	}
 	return res
 }

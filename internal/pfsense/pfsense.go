@@ -103,3 +103,9 @@ func Configure(action string) (string, error) {
 	}
 	return s, nil
 }
+
+// Installed reports whether the GUI integration is installed here.
+func Installed() bool {
+	_, err := os.Stat(filepath.Join(helperDir, "config.php"))
+	return err == nil
+}

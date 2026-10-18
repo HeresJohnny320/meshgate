@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import android.view.ViewGroup
 import android.annotation.SuppressLint
@@ -18,6 +19,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -59,6 +62,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -78,6 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.Dispatchers
@@ -116,7 +121,14 @@ data class Status(
     val joined: Boolean, val running: Boolean, val name: String, val meshIp: String,
     val relay: String, val error: String, val peers: List<Peer>, val admin: List<AdminLink>,
     val home: Boolean, val exit: String, val exitWanted: String, val warnings: List<String>,
+    val exitBlocked: Boolean = false,
+    val killSwitch: Boolean = false,
+    val exits: List<ExitOption> = emptyList(),
+    val exitChoice: String = "",
+    val access: List<Pair<String, String>> = emptyList(),
 )
+
+data class ExitOption(val id: String, val name: String, val up: Boolean)
 
 fun parseStatus(json: String): Status {
     val o = JSONObject(json)
@@ -136,6 +148,10 @@ fun parseStatus(json: String): Status {
         o.optBoolean("joined"), o.optBoolean("running"), o.optString("name"), o.optString("mesh_ip"),
         o.optString("home_relay"), o.optString("error"), list, admin,
         o.optBoolean("home"), o.optString("exit"), o.optString("exit_wanted"), warnings,
+        o.optBoolean("exit_blocked"), o.optBoolean("kill_switch"),
+        o.optJSONArray("exits")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { ExitOption(it.optString("id"), it.optString("name"), it.optBoolean("up")) } } ?: emptyList(),
+        o.optString("exit_choice"),
+        o.optJSONArray("access")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { it.optString("node") to it.optString("what") } } ?: emptyList(),
     )
 }
 
@@ -216,9 +232,10 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: () -> Unit, onTests: () -> Unit
         if (it.resultCode == Activity.RESULT_OK) startVpn()
     }
     var confirmLeave by remember { mutableStateOf(false) }
+    var pickExit by remember { mutableStateOf(false) }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth().weight(1f)) {
-        item { ConnectionCard(s) { on ->
+        item { ConnectionCard(s, onPickExit = { pickExit = true }) { on ->
             if (on) {
                 val intent = VpnService.prepare(activity)
                 if (intent != null) consent.launch(intent) else startVpn()
@@ -244,6 +261,9 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: () -> Unit, onTests: () -> Unit
                 }
             }
         }
+        item { KillSwitchCard(s, activity, onChange) }
+        item { AccessCard(s) }
+        item { UpdateCard(activity) }
         item {
             ElevatedCard(Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -267,6 +287,7 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: () -> Unit, onTests: () -> Unit
             }
         }
     }
+    if (pickExit) ExitPicker(s, onDone = { pickExit = false; onChange() })
     if (confirmLeave) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false },
@@ -285,9 +306,161 @@ fun ColumnScope.StatusScreen(s: Status, onAdmin: () -> Unit, onTests: () -> Unit
     }
 }
 
+/**
+ * Kill switch: this phone's internet only goes through an exit node; with
+ * none reachable (or if the tunnel cannot start) it is blocked. Turning
+ * meshgate off is a deliberate choice and gives normal internet. Blocking
+ * while the app is not running at all is Android's job (Always-on VPN).
+ */
+@Composable
+fun KillSwitchCard(s: Status, activity: Activity, onChange: () -> Unit) {
+    val lockdown = Mesh.service?.let { Build.VERSION.SDK_INT >= 29 && it.isLockdownEnabled } ?: false
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Kill switch", style = MaterialTheme.typography.titleMedium)
+                    Text("Internet only through an exit node: blocked when none is reachable. Turning meshgate off still gives normal internet.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(checked = s.killSwitch, onCheckedChange = { Mesh.engine.setKillSwitch(it); onChange() })
+            }
+            if (s.killSwitch && s.exitWanted.isEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                Text("Pick an exit node for this phone first (Admin → Nodes → Edit), otherwise there is nothing to protect.",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (lockdown) "Also blocks while the app is off or crashed: on (Android Always-on VPN)."
+                    else "To also block while the app is off or crashed, turn on Android's Always-on VPN + Block connections without VPN.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { activity.startActivity(Intent(Settings.ACTION_VPN_SETTINGS)) }) { Text("Settings") }
+            }
+        }
+    }
+}
+
+/**
+ * In-app updates: compare with the latest GitHub release, download its APK
+ * (checksum-verified by the engine) and let Android install it.
+ */
+@Composable
+fun UpdateCard(activity: Activity) {
+    val scope = rememberCoroutineScope()
+    val current = remember {
+        runCatching { activity.packageManager.getPackageInfo(activity.packageName, 0).versionName }.getOrNull() ?: "?"
+    }
+    var latest by remember { mutableStateOf<String?>(null) }
+    var state by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { latest = withContext(Dispatchers.IO) { Mesh.engine.updateAvailable(current) } }
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Updates", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when {
+                        state.isNotEmpty() -> state
+                        latest == null -> "Version $current · checking…"
+                        latest!!.isEmpty() -> "Version $current · up to date"
+                        else -> "Version $current · ${latest} is available"
+                    },
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            val tag = latest
+            if (!tag.isNullOrEmpty()) {
+                Spacer(Modifier.width(12.dp))
+                FilledTonalButton(enabled = state.isEmpty() || state.startsWith("Failed"), onClick = {
+                    state = "Downloading $tag…"
+                    scope.launch {
+                        val file = java.io.File(activity.cacheDir, "updates/meshgate-$tag.apk")
+                        val err = withContext(Dispatchers.IO) { runCatching { Mesh.engine.downloadAPK(tag, file.path) }.exceptionOrNull() }
+                        if (err != null) {
+                            state = "Failed: ${err.message}"
+                            return@launch
+                        }
+                        state = "Downloaded and verified; Android asks you to install it."
+                        val uri = FileProvider.getUriForFile(activity, activity.packageName + ".files", file)
+                        activity.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                }) { Text("Update") }
+            }
+        }
+    }
+}
+
+/** Choose among the exit nodes this phone may use (its permissions). */
+@Composable
+fun ExitPicker(s: Status, onDone: () -> Unit) {
+    val choices = buildList {
+        add("" to "Admin default" + if (s.exitWanted.isNotEmpty()) " (${s.exitWanted})" else " (own connection)")
+        s.exits.forEach { add(it.id to it.name + if (it.up) "" else " — down") }
+        add("off" to "Own connection" + if (s.killSwitch) " (blocked: kill switch is on)" else "")
+    }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Internet away from home") },
+        text = {
+            Column {
+                choices.forEach { (id, label) ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()
+                        .clickable { Mesh.engine.setExitChoice(id); onDone() }.padding(vertical = 6.dp)) {
+                        RadioButton(selected = s.exitChoice == id, onClick = { Mesh.engine.setExitChoice(id); onDone() })
+                        val opt = s.exits.find { it.id == id }
+                        if (opt != null) {
+                            Box(Modifier.size(8.dp).clip(CircleShape).background(if (opt.up) Color(0xFF2E9E5B) else MaterialTheme.colorScheme.outline))
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(label)
+                    }
+                }
+                Text("If the one in use goes down, the phone moves to another exit it may use.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text("Close") } },
+    )
+}
+
+/** What the admin allows this device: exit nodes and what it may reach. */
+@Composable
+fun AccessCard(s: Status) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Your access", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(6.dp))
+            Text("Exit nodes", style = MaterialTheme.typography.labelLarge)
+            if (s.exits.isEmpty()) {
+                Text("None allowed for this device.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            s.exits.forEach { ex ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (ex.up) Color(0xFF2E9E5B) else MaterialTheme.colorScheme.outline))
+                    Spacer(Modifier.width(8.dp))
+                    Text(ex.name + if (ex.up) "" else " (down)", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            if (s.access.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Networks you can reach", style = MaterialTheme.typography.labelLarge)
+                s.access.forEach { (node, what) ->
+                    Text("$node · $what", style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
+                }
+            }
+            Text("Set by an admin; updates here automatically.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+        }
+    }
+}
+
 /** The big switch plus where traffic goes right now. */
 @Composable
-fun ConnectionCard(s: Status, onToggle: (Boolean) -> Unit) {
+fun ConnectionCard(s: Status, onPickExit: () -> Unit, onToggle: (Boolean) -> Unit) {
     val on = s.running
     Card(
         Modifier.fillMaxWidth(),
@@ -316,12 +489,17 @@ fun ConnectionCard(s: Status, onToggle: (Boolean) -> Unit) {
             if (on) {
                 Text(
                     when {
+                        s.exitBlocked -> "Internet: blocked — no exit node reachable (exit only)"
                         s.exit.isNotEmpty() -> "Internet: through ${s.exit}"
                         s.exitWanted.isNotEmpty() && s.home -> "Internet: your own connection (through ${s.exitWanted} when away)"
                         else -> "Internet: your own connection"
                     },
                     style = MaterialTheme.typography.bodyMedium,
+                    color = if (s.exitBlocked) MaterialTheme.colorScheme.error else Color.Unspecified,
                 )
+            }
+            if (s.exits.isNotEmpty()) {
+                TextButton(onClick = onPickExit, contentPadding = PaddingValues(0.dp)) { Text("Change exit node") }
             }
             (listOf(s.error) + s.warnings).filter { it.isNotEmpty() }.forEach {
                 Spacer(Modifier.height(6.dp))

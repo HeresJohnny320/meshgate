@@ -27,6 +27,10 @@ import (
 const (
 	prioReply  = 5200
 	prioRoutes = 5210
+	// LAN exits: per source, first the main table without its default
+	// route (LAN, VLAN and local routes win), then the exit table.
+	prioLANLocal = 5220
+	prioLANExit  = 5221
 )
 
 // Manager owns one interface.
@@ -206,7 +210,74 @@ func (m *Manager) applyNetwork(cfg meshcfg.Config) error {
 		return err
 	}
 	ensureRule(prioReply, fw.TableReply, fw.MarkPreserve, false, len(reply) > 0)
+
+	// LAN devices sent to an exit node: their default route is the tunnel,
+	// or a blackhole while the exit is unusable (no leak via the home line).
+	if err := syncLANExitTable(link, cfg); err != nil {
+		return err
+	}
+	var srcs []netip.Prefix
+	if cfg.LANExitVia != "" || cfg.LANExitDown {
+		srcs = cfg.LANExitSrcs
+	}
+	syncSrcRules(prioLANLocal, unix.RT_TABLE_MAIN, true, srcs)
+	syncSrcRules(prioLANExit, fw.TableLANExit, false, srcs)
 	return nil
+}
+
+func syncLANExitTable(link netlink.Link, cfg meshcfg.Config) error {
+	all := prefixToIPNet(netip.MustParsePrefix("0.0.0.0/0"))
+	var want *netlink.Route
+	switch {
+	case cfg.LANExitVia != "":
+		want = &netlink.Route{LinkIndex: link.Attrs().Index, Dst: all, Table: fw.TableLANExit, Scope: netlink.SCOPE_LINK}
+	case cfg.LANExitDown:
+		want = &netlink.Route{Dst: all, Table: fw.TableLANExit, Type: unix.RTN_BLACKHOLE}
+	}
+	have, _ := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: fw.TableLANExit}, netlink.RT_FILTER_TABLE)
+	for _, r := range have {
+		if want == nil || r.Type != want.Type || r.LinkIndex != want.LinkIndex {
+			netlink.RouteDel(&r)
+		}
+	}
+	if want == nil {
+		return nil
+	}
+	if err := netlink.RouteReplace(want); err != nil {
+		return fmt.Errorf("lan exit route: %w", err)
+	}
+	return nil
+}
+
+// syncSrcRules keeps exactly one "from <src> lookup table" rule per source
+// at prio (with suppress_prefixlength 0 when suppressDefault).
+func syncSrcRules(prio, table int, suppressDefault bool, srcs []netip.Prefix) {
+	want := map[string]bool{}
+	for _, s := range srcs {
+		want[s.String()] = true
+	}
+	rules, _ := netlink.RuleList(netlink.FAMILY_V4)
+	for _, r := range rules {
+		if r.Priority != prio {
+			continue
+		}
+		if r.Src != nil && want[r.Src.String()] && r.Table == table {
+			delete(want, r.Src.String())
+			continue
+		}
+		netlink.RuleDel(&r)
+	}
+	for s := range want {
+		r := netlink.NewRule()
+		r.Family = netlink.FAMILY_V4
+		r.Priority, r.Table, r.Src = prio, table, prefixToIPNet(netip.MustParsePrefix(s))
+		if suppressDefault {
+			r.SuppressPrefixlen = 0
+		}
+		if err := netlink.RuleAdd(r); err != nil {
+			log.Printf("wg: ip rule from %s: %v", s, err)
+		}
+	}
 }
 
 func syncRoutes(link netlink.Link, table int, want []netip.Prefix) error {
@@ -311,6 +382,8 @@ func (m *Manager) Down() {
 	defer m.mu.Unlock()
 	ensureRule(prioRoutes, fw.TableRoutes, 0, true, false)
 	ensureRule(prioReply, fw.TableReply, 0, false, false)
+	syncSrcRules(prioLANLocal, unix.RT_TABLE_MAIN, true, nil)
+	syncSrcRules(prioLANExit, fw.TableLANExit, false, nil)
 	if m.uapi != nil {
 		m.uapi.Close()
 	}

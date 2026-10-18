@@ -2,11 +2,14 @@ package meshcore
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/store"
+	"github.com/heresjohnny320/meshgate/internal/update"
 )
 
 // adminState is the app's dashboard session. The token is kept in memory
@@ -166,4 +170,27 @@ func (e *Engine) adminServers() []model.Node {
 		return a.Name < b.Name
 	})
 	return out
+}
+
+// UpdateAvailable returns the newest release tag if it is newer than the
+// app's version (e.g. "0.2.8" or "v0.2.8"), otherwise "".
+func (e *Engine) UpdateAvailable(appVersion string) string {
+	tag, err := update.Latest(context.Background())
+	if err != nil || !update.Newer(appVersion, tag) {
+		return ""
+	}
+	return tag
+}
+
+// DownloadAPK saves release tag's APK to path after checking it against
+// the release's SHA256SUMS; the app then asks Android to install it.
+func (e *Engine) DownloadAPK(tag, path string) error {
+	b, err := update.Fetch(context.Background(), tag, "meshgate-android.apk")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
 }

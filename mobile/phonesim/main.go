@@ -190,6 +190,18 @@ func main() {
 func runAdmin(e *meshcore.Engine, lines string) {
 	for _, l := range strings.Split(strings.TrimSpace(lines), "\n") {
 		f := strings.SplitN(strings.TrimSpace(l), " ", 3)
+		if len(f) == 2 && f[0] == "killswitch" { // the app's Kill switch toggle
+			log.Printf("killswitch %s: %v", f[1], e.SetKillSwitch(f[1] == "on"))
+			continue
+		}
+		if len(f) == 2 && f[0] == "exit" { // the app's exit picker ("default" = admin's)
+			choice := f[1]
+			if choice == "default" {
+				choice = ""
+			}
+			log.Printf("exit choice %s: %v", f[1], e.SetExitChoice(choice))
+			continue
+		}
 		if len(f) < 2 {
 			continue
 		}
