@@ -430,3 +430,55 @@ func TestExitServesOnlyAllowedDevices(t *testing.T) {
 		t.Errorf("exit clients wrong:\n%s", s)
 	}
 }
+
+func TestIptablesRulesFollowForwards(t *testing.T) {
+	// vps is the edge: one rule pair per enabled forward and protocol.
+	rules := Build(in(vps)).IptablesRules()
+	joined := ""
+	for _, r := range rules {
+		joined += strings.Join(r, " ") + "\n"
+	}
+	for _, want := range []string{
+		"-o mg0 -p tcp -m conntrack --ctstate DNAT --ctorigdstport 25565 -m comment --comment meshgate forward minecraft -j ACCEPT",
+		"-i mg0 -p tcp -m conntrack --ctstate ESTABLISHED,RELATED --ctorigdstport 25565",
+		"-o mg0 -p udp -m conntrack --ctstate DNAT --ctorigdstport 2456:2458",
+		"-o mg0 -p udp -m conntrack --ctstate DNAT --ctorigdstport 8443",
+		"-i mg0 -o mg0 -m comment --comment meshgate relay -j ACCEPT",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "7777") || strings.Contains(joined, "forward off") {
+		t.Errorf("disabled forward has a rule:\n%s", joined)
+	}
+	// home is not an edge and not a relay: only its shared LAN.
+	h := Build(in(home))
+	h.LANs = []LANRoute{{CIDR: "192.168.1.0/24", Iface: "eth0"}}
+	for _, r := range h.IptablesRules() {
+		if s := strings.Join(r, " "); !strings.Contains(s, "192.168.1.0/24") {
+			t.Errorf("non-edge node got %q", s)
+		}
+	}
+	iptCheck(t, append(rules, h.IptablesRules()...))
+}
+
+// iptCheck applies rules with the real iptables in a throwaway namespace.
+func iptCheck(t *testing.T, rules [][]string) {
+	t.Helper()
+	if _, err := exec.LookPath("iptables"); err != nil {
+		t.Skip("iptables not installed")
+	}
+	var script strings.Builder
+	script.WriteString("set -e; iptables -N MESHGATE\n")
+	for _, r := range rules {
+		script.WriteString("iptables -A MESHGATE")
+		for _, a := range r {
+			script.WriteString(" '" + a + "'")
+		}
+		script.WriteString("\n")
+	}
+	if out, err := exec.Command("unshare", "-r", "-n", "sh", "-c", script.String()).CombinedOutput(); err != nil {
+		t.Fatalf("iptables rejected the rules: %v\n%s", err, out)
+	}
+}

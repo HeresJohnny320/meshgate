@@ -39,6 +39,10 @@ for n in inet hr; do x $n sh -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'; done
 x hr nft add table ip nat
 x hr nft add chain ip nat post '{ type nat hook postrouting priority srcnat; }'
 x hr nft add rule ip nat post oifname wan masquerade
+# Like ufw or Docker on a real VPS: forwarded traffic is dropped unless a
+# rule allows it (meshgate adds its own MESHGATE chain for that).
+for n in vps vps2 home; do x $n iptables -P FORWARD DROP; done
+x home iptables -A FORWARD -i eth0 -o eth0 -j ACCEPT # home's own rule: its LAN may use its internet
 x vps  ip route add default via 203.0.113.1
 x hr   ip route add default via 198.51.100.1
 x fr   ip route add default via 198.18.1.1
@@ -335,8 +339,11 @@ start "$FIRST"; sleep 8
 
 echo; echo "== disable a forward: its port must be blocked, then enable it again"
 MASQ_ID=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([f["value"]["id"] for f in v["forwards"] if f["value"]["name"]=="masq"][0])')
+check "iptables: the edge (vps) allows the masq forward" "x vps iptables -S MESHGATE | grep -q 'meshgate forward masq'"
+check "iptables: home (not the edge) has no forward rules" "! x home iptables -S MESHGATE 2>/dev/null | grep -q 'meshgate forward'"
 api vps toggle "{\"kind\":\"forward\",\"id\":\"$MASQ_ID\",\"enabled\":false}" >/dev/null
 sleep 2
+check "iptables: disabling the forward removes its rule" "! x vps iptables -S MESHGATE | grep -q 'meshgate forward masq'"
 OFF=$(x fr sh -c 'echo | nc -w3 203.0.113.10 25566' 2>/dev/null || true)
 check "disabled forward blocks the friend" "[ -z '$OFF' ]"
 check "disabled forward keeps its name" "api vps view | grep -q '\"name\":\"masq\"'"
@@ -344,6 +351,7 @@ api vps toggle "{\"kind\":\"forward\",\"id\":\"$MASQ_ID\",\"enabled\":true}" >/d
 sleep 2
 ON=$(x fr sh -c 'echo | nc -w3 203.0.113.10 25566' 2>/dev/null || true)
 check "re-enabled forward works again" "echo '$ON' | grep -q 'hello from game server'"
+check "iptables: re-enabling puts the rule back" "x vps iptables -S MESHGATE | grep -q 'meshgate forward masq'"
 
 echo; echo "== lock down the home LAN (restricted policy + access rules)"
 ip netns exec nas python3 -m http.server 8080 --bind 0.0.0.0 >/dev/null 2>&1 & echo $! > "$D/nas1.pid"

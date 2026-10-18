@@ -59,6 +59,7 @@ type Agent struct {
 	lastWG    *meshcfg.Config
 	lastFW    string
 	lastFWAt  time.Time
+	lastIpt   string // iptables MESHGATE rules last applied
 	warnings  []string
 	proxyErr  string
 	startedAt time.Time
@@ -329,12 +330,24 @@ func (a *Agent) reconcile(ctx context.Context) {
 		script := fw.Render(plan)
 		// Reload on change, and once a minute in case something flushed our
 		// table/anchors (e.g. `nft flush ruleset`, a manual pfctl -F all).
-		if script != a.lastFW || time.Since(a.lastFWAt) > time.Minute {
+		ipt := plan.IptablesRules()
+		iptKey := fmt.Sprint(self.IptablesOff, ipt)
+		if script != a.lastFW || iptKey != a.lastIpt || time.Since(a.lastFWAt) > time.Minute {
 			a.readTraffic() // reloading restarts the counters; keep what they hold
+			var iptErr error
+			if self.IptablesOff {
+				fw.RemoveIptables()
+			}
 			if err := fw.Load(script); err != nil {
 				warn = append(warn, "firewall: "+err.Error())
 			} else {
-				a.lastFW, a.lastFWAt = script, time.Now()
+				if !self.IptablesOff {
+					iptErr = fw.SyncIptables(ipt)
+				}
+				if iptErr != nil {
+					warn = append(warn, "firewall (iptables FORWARD): "+iptErr.Error())
+				}
+				a.lastFW, a.lastFWAt, a.lastIpt = script, time.Now(), iptKey
 			}
 		}
 		a.updateProxy(ctx, netw, nodes)

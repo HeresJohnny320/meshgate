@@ -113,6 +113,10 @@ type Node struct {
 	// management requests (by default every server does, so the app keeps
 	// working when one is down).
 	AppAdminOff bool `json:"app_admin_off,omitempty"`
+	// IptablesOff: meshgate leaves iptables alone on this node (Linux). By
+	// default it keeps a MESHGATE chain in iptables' FORWARD chain that lets
+	// this node's port forwards, relaying and exit traffic past ufw/Docker.
+	IptablesOff bool `json:"iptables_off,omitempty"`
 	// TestPort runs meshgate's test service on this TCP+UDP port (0 = off).
 	TestPort int `json:"test_port,omitempty"`
 	// JoinAddr/JoinFP let other devices join through this node.

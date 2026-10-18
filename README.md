@@ -533,7 +533,7 @@ Then remove the device from the mesh in the web UI or TUI of another node.
 |---|---|
 | A device shows `via <relay>` instead of `direct` | Normal when it's away from home or behind NAT. Forward UDP 51820 and 51822 on your router for direct connections from outside. |
 | Join fails / times out | The token may be used up or expired: make a new one. On the VPS, check TCP 51821 is open in your provider's firewall. |
-| Friends can't connect to a forward | Open the port in your VPS provider's firewall. With ufw: `sudo ufw route allow proto tcp to any port 25565`. Check the forward is on. |
+| Friends can't connect to a forward | Open the port in your VPS provider's firewall and check the forward is on. ufw and Docker are handled automatically: each Linux server keeps a `MESHGATE` chain in iptables' FORWARD chain with exactly its own forwards (its ports and protocol, gone when you disable the forward), relaying and exit traffic; `sudo iptables -S MESHGATE` shows it, and **Nodes → Edit** can switch it off per server. `sudo meshgate diag tcp <target IP> <port>` on the VPS tells you whether the game server answers through the mesh. |
 | No **Admin** button in the phone app | Turn the tunnel on. If the card says no node hosts the web UI, run `meshgate webui enable` on one. |
 | Forgot the dashboard password | On a node with the web UI: `sudo meshgate webui enable --admin-pass 'new-password'` |
 | pfSense: "install the WireGuard package first" | *System → Package Manager* → install **WireGuard**, then rerun. |

@@ -21,3 +21,9 @@ func IsPfSense() bool { return false }
 
 // ReadCounters is not implemented here yet (traffic stats come from Linux edges).
 func ReadCounters() map[string][2]uint64 { return nil }
+
+// SyncIptables is Linux only.
+func SyncIptables(rules [][]string) error { return nil }
+
+// RemoveIptables is Linux only.
+func RemoveIptables() {}

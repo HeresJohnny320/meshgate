@@ -23,6 +23,7 @@ func Load(rendered string) error {
 
 // Remove deletes meshgate's rules.
 func Remove() error {
+	RemoveIptables()
 	return Load("table inet meshgate\ndelete table inet meshgate\n")
 }
 
@@ -58,4 +59,47 @@ func ReadCounters() map[string][2]uint64 {
 		}
 	}
 	return m
+}
+
+// SyncIptables makes the MESHGATE chain hold exactly rules (Plan.
+// IptablesRules) and keeps it at the top of iptables' FORWARD chain. ufw and
+// Docker set FORWARD's policy to DROP, and a drop in any table wins over
+// meshgate's own nftables accept; the chain lets this node's meshgate
+// traffic through and nothing else. Rebuilt only when rules change (and
+// re-checked every minute with the firewall).
+func SyncIptables(rules [][]string) error {
+	if _, err := exec.LookPath("iptables"); err != nil {
+		return nil // no iptables: nothing can block us there
+	}
+	ipt := func(args ...string) error {
+		out, err := exec.Command("iptables", append([]string{"-w", "5"}, args...)...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("iptables %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	ipt("-N", "MESHGATE") // fails harmlessly when it exists
+	if err := ipt("-F", "MESHGATE"); err != nil {
+		return err
+	}
+	for _, r := range rules {
+		if err := ipt(append([]string{"-A", "MESHGATE"}, r...)...); err != nil {
+			return err
+		}
+	}
+	if ipt("-C", "FORWARD", "-j", "MESHGATE") != nil {
+		return ipt("-I", "FORWARD", "1", "-j", "MESHGATE")
+	}
+	return nil
+}
+
+// RemoveIptables deletes the MESHGATE chain.
+func RemoveIptables() {
+	if _, err := exec.LookPath("iptables"); err != nil {
+		return
+	}
+	for exec.Command("iptables", "-w", "5", "-D", "FORWARD", "-j", "MESHGATE").Run() == nil {
+	}
+	exec.Command("iptables", "-w", "5", "-F", "MESHGATE").Run()
+	exec.Command("iptables", "-w", "5", "-X", "MESHGATE").Run()
 }

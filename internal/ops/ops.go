@@ -358,6 +358,7 @@ type NodePatch struct {
 	LANExits     *[]model.LANExit `json:"lan_exits,omitempty"`
 	ExitOnly     *bool            `json:"exit_only,omitempty"`
 	ExitsAllowed *[]string        `json:"exits_allowed,omitempty"`
+	Iptables     *bool            `json:"iptables,omitempty"`
 }
 
 // UpdateNode edits a node.
@@ -438,6 +439,9 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 			}
 		}
 		n.ExitsAllowed = *p.ExitsAllowed
+	}
+	if p.Iptables != nil {
+		n.IptablesOff = !*p.Iptables
 	}
 	if p.ExitOnly != nil {
 		n.ExitOnly = *p.ExitOnly

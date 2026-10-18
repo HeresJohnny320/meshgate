@@ -520,6 +520,7 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			tp, _ := strconv.Atoi(strings.TrimSpace(v["test_port"]))
 			patch["test_port"] = tp
 			patch["app_admin"] = v["app_admin"] == "true"
+			patch["iptables"] = v["iptables"] == "true"
 			var le []model.LANExit
 			for _, src := range lines(v["lan_exit_src"]) {
 				le = append(le, model.LANExit{Src: src, Via: v["lan_exit_via"]})
@@ -538,6 +539,7 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			toggle("exit", "Exit node (devices may use it for internet)", n.Exit).
 			text("test_port", "Test service port (empty = off)", itoa0(n.TestPort), "8099").
 			toggle("app_admin", "Phone app may manage through this node", !n.AppAdminOff).
+			toggle("iptables", "Add iptables allow rules (ufw/Docker)", !n.IptablesOff).
 			text("lan_exit_src", "LAN devices via exit (IPs/subnets, comma)", lanExitSrcs(n), "192.168.1.205, 192.168.20.0/24").
 			choice("lan_exit_via", "...through exit node", exitChoices(m.exitOptions(n.ID)[1:]), lanExitVia(n)).
 			toggle("exit_only", "...exit only (block if no exit reachable)", n.ExitOnly).

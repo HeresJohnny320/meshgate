@@ -546,6 +546,7 @@ function nodeDialog(it) {
          <label class="inline"><input type="checkbox" name="exit_only" ${n.exit_only ? "checked" : ""}> Exit only: if no exit node is reachable, block their internet instead of using your normal connection</label>
          <p class="hint">Their internet traffic leaves through the exit (websites see its IP); if it goes down they move to
            another exit node automatically. Your LAN and mesh stay reachable.</p></fieldset>` : `<p class="hint full">To send LAN devices' internet through an exit node, use the <b>Exit routes</b> tab.</p>`}
+       <label class="inline full"><input type="checkbox" name="iptables" ${n.iptables_off ? "" : "checked"}> Add iptables allow rules for this node's forwards, relaying and exits (needed with ufw or Docker; Linux)</label>
        <label class="inline full"><input type="checkbox" name="app_admin" ${n.app_admin_off ? "" : "checked"}> Phone app may manage the mesh through this node</label>
        <label class="full">Test service port (TCP+UDP, empty = off; see Tools) <input name="test_port" type="number" min="1" max="65535" value="${n.test_port || ""}" placeholder="off"></label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
@@ -565,7 +566,7 @@ function nodeDialog(it) {
         Object.assign(patch, { exit_via: fd.get("exit_via"), exit_only: fd.get("exit_only") === "on", exits_allowed: allowed });
       }
       else Object.assign(patch, { endpoints: lines("endpoints"), routes: lines("routes"), relay: fd.get("relay") === "on",
-        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0, app_admin: fd.get("app_admin") === "on",
+        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0, app_admin: fd.get("app_admin") === "on", iptables: fd.get("iptables") === "on",
         lan_exits: lines("lan_exit_src").map((src) => ({ src, via: fd.get("lan_exit_via") })), exit_only: fd.get("exit_only") === "on" });
       await api("/api/node", { id: n.id, patch, scope: fd.get("scope") });
     });

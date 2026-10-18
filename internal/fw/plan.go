@@ -108,6 +108,8 @@ type Plan struct {
 	WANOpen []Allow
 	// Restricted drops everything from the mesh that Allow does not match.
 	Restricted bool
+	// Relay: this node forwards traffic between mesh devices.
+	Relay bool
 	// Firewall leaves mesh access to the host firewall's own rules (pfSense
 	// GUI rules on the assigned interface); meshgate only keeps Own open.
 	Firewall bool
@@ -159,7 +161,8 @@ type LANRoute struct {
 
 // Build computes the plan.
 func Build(in Input) Plan {
-	p := Plan{Iface: in.Iface, Mesh: in.Network.CIDR, WANIface: in.WANIface, Restricted: in.Self.Restricted(), Firewall: in.Self.FirewallManaged()}
+	p := Plan{Iface: in.Iface, Mesh: in.Network.CIDR, WANIface: in.WANIface, Restricted: in.Self.Restricted(), Firewall: in.Self.FirewallManaged(),
+		Relay: in.Self.Relay}
 	byID := map[string]model.Node{}
 	for _, n := range in.Nodes {
 		byID[n.ID] = n
