@@ -11,6 +11,8 @@
 require_once("guiconfig.inc");
 
 $opt = config_get_path("installedpackages/meshgate/opt", "");
+// Changes with every meshgate update, so browsers never keep an old dashboard.
+$ver = @filemtime("/usr/local/www/meshgate/index.html");
 $pgtitle = array(gettext("VPN"), "meshgate");
 include("head.inc");
 ?>
@@ -24,9 +26,9 @@ include("head.inc");
 <?php if ($opt !== ""): ?>
 	<a href="/firewall_rules.php?if=<?=htmlspecialchars($opt)?>">Firewall &gt; Rules &gt; MESHGATE</a>
 <?php endif; ?>
-	<a href="/meshgate/index.html" target="_blank" rel="noopener" class="btn btn-xs btn-default"><i class="fa fa-expand"></i> Full screen</a>
+	<a href="/meshgate/index.html?v=<?=$ver?>" target="_blank" rel="noopener" class="btn btn-xs btn-default"><i class="fa fa-expand"></i> Full screen</a>
 </div>
-<iframe id="mg-frame" src="/meshgate/index.html" title="meshgate"></iframe>
+<iframe id="mg-frame" src="/meshgate/index.html?v=<?=$ver?>" title="meshgate"></iframe>
 <script>
 // Fill the window below pfSense's menu, and keep doing so on resize.
 (function () {

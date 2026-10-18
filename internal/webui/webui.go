@@ -69,6 +69,9 @@ func secure(h http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'")
+		// Always revalidate, so a meshgate update never leaves an old
+		// dashboard in the browser cache.
+		w.Header().Set("Cache-Control", "no-cache")
 		h.ServeHTTP(w, r)
 	})
 }
