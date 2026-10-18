@@ -17,6 +17,8 @@ nav { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
 nav button { background: none; color: var(--muted); border: none; padding: 8px 12px; border-radius: 8px; }
 nav button.active { background: var(--chip); color: var(--text); }
 main { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+/* Inside pfSense (VPN > meshgate, or its Full screen view): use the width. */
+html[data-api] main { max-width: none; }
 h1 { margin: 0 0 16px; font-size: 22px; }
 h2 { font-size: 17px; margin: 0 0 10px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
@@ -37,6 +39,7 @@ th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--bo
 th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 tr:last-child td { border-bottom: none; }
 td.actions { text-align: right; }
+td.wrap { white-space: normal; min-width: 180px; }
 td.empty { color: var(--muted); text-align: center; padding: 24px; }
 .chip { display: inline-block; padding: 1px 8px; border-radius: 99px; background: var(--chip); font-size: 12px; }
 .chip.local { color: var(--warn); }

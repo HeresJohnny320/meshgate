@@ -253,7 +253,7 @@ Runs only on the machines you chose (installer option 1 or 2, `--webui`, or
 | From outside the mesh, on a VPS | `ssh -L 8080:127.0.0.1:8080 you@vps`, then `http://localhost:8080` |
 
 The dashboard is not on the public internet by default. Tabs: **Nodes**,
-**Port forwards**, **HTTPS**, **Access rules**, **Add devices**, **Settings**
+**Traffic**, **Port forwards**, **HTTPS**, **Access rules**, **Exit routes**, **Add devices**, **Tools**, **Settings**
 (Let's Encrypt email, admin login).
 
 - Turn it on or off on a server node: `sudo meshgate webui enable` /
@@ -270,8 +270,8 @@ On every server node:
 sudo meshgate tui
 ```
 
-Sections: `1` Nodes, `2` Forwards, `3` HTTPS, `4` Rules, `5` Devices (or
-`Tab`). Keys: `a` add, `e` edit, `t` turn on/off, `d` delete, `c` drop a
+Sections: `1` Nodes, `2` Forwards, `3` HTTPS, `4` Rules, `5` Exit routes,
+`6` Devices (or `Tab`). Keys: `a` add, `e` edit, `t` turn on/off, `d` delete, `c` drop a
 local-only override, `w` WireGuard app config, `s` settings, `y` theme, `r`
 refresh, `q` quit.
 
@@ -460,27 +460,28 @@ restricted one, or "as pfSense's MESHGATE rules allow"). Devices only receive
 the access rules that concern them. In the TUI the node list shows
 `may use vps/vps2`.
 
-### Send LAN devices (VMs, a VLAN) through an exit node
+### Send LAN devices (VMs, a VLAN) through an exit node: Exit routes
 
 Devices behind your router that don't run meshgate (VMs, consoles, a whole
-VLAN) can also use an exit node:
+VLAN) can use an exit node too, one route each, like port forwards:
 
 1. Tick *Exit node* on the VPS (**Nodes → Edit**).
-2. **Edit** on the router that is those devices' gateway (pfSense, or a Linux
-   server sharing the LAN) → *Send LAN devices' internet through an exit node*:
-   one IP or subnet per line (e.g. `192.168.1.205`, `192.168.20.0/24`) and the
-   exit node.
+2. **Exit routes → New exit route** (TUI: `5`, `a`): a name, the device's IP or
+   subnet (e.g. `192.168.200.11` or `192.168.20.0/24`) and the exit node. The
+   router is picked automatically: the node whose *Shared LAN subnets* contain
+   that IP (pfSense, or a Linux server sharing the LAN).
 
-Their internet traffic then leaves through the VPS (websites see its IP),
-while your LAN, other VLANs and mesh devices stay reachable as usual. If the
-exit goes down they move to another exit node automatically; tick *Exit only*
-to block their internet when no exit is left (otherwise they use your normal
-connection). For a VLAN that should *only* reach the internet through the exit,
-tick *Exit only* and block its normal internet access in pfSense as well;
-meshgate's rules come first, so the exit keeps working. One router uses one exit
-node at a time. If those devices use pfSense for DNS, their lookups still leave
-from your home IP; point them at a public resolver (e.g. `1.1.1.1`) to send DNS
-through the exit too.
+That device's internet traffic then leaves through the VPS (websites see its
+IP), while everything else on your network keeps using your normal connection
+and every device can still reach the mesh. Each route can be switched off,
+edited or deleted on its own. If the exit goes down the router fails over to
+another exit node; with none left, routes marked *Exit only* get no internet and
+the others use your normal connection. For a VLAN that should *only* reach the
+internet through the exit, tick *Exit only* and block its normal internet in
+pfSense as well; meshgate's rules come first, so the exit keeps working. One
+router uses one exit node at a time. If those devices use pfSense for DNS,
+their lookups still leave from your home IP; point them at a public resolver
+(e.g. `1.1.1.1`) to send DNS through the exit too.
 
 ### Every change: all nodes or only this node
 

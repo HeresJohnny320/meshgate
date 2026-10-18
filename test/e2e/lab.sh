@@ -229,19 +229,21 @@ echo; echo "== LAN exit: a LAN device behind home goes out through vps, and nowh
 x nas ip route replace default via 192.168.1.10   # home is the NAS's router for this test
 nasip() { x nas sh -c 'echo | nc -w3 198.18.1.5 7000' 2>/dev/null | sed -n 's/.*you are //p'; }
 check "before: the NAS reaches the internet through home's line" "test \"\$(nasip)\" = 198.51.100.20"
-api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"lan_exits\":[{\"src\":\"192.168.1.20\",\"via\":\"$VPS_ID\"}]},\"scope\":\"cluster\"}" >/dev/null
+ROUTE=$(api vps exitroute "{\"scope\":\"cluster\",\"exit_route\":{\"name\":\"nas\",\"src\":\"192.168.1.20\",\"via\":\"$VPS_ID\",\"enabled\":true}}")
+ROUTE_ID=$(echo "$ROUTE" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+check "exit route picked home as the router (it shares 192.168.1.0/24)" "echo '$ROUTE' | grep -q '\"router\":\"$HOME_ID\"'"
 sleep 8
 check "LAN device's internet leaves through the vps exit" "test \"\$(nasip)\" = 203.0.113.10"
 check "LAN device still reaches its LAN" "x nas ping -c1 -W2 192.168.1.10 >/dev/null"
 api vps node "{\"id\":\"$VPS_ID\",\"patch\":{\"exit\":false},\"scope\":\"cluster\"}" >/dev/null
 sleep 8
 check "exit gone, exit only off: LAN device falls back to home's line" "test \"\$(nasip)\" = 198.51.100.20"
-api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"exit_only\":true},\"scope\":\"cluster\"}" >/dev/null
+api vps exitroute "{\"scope\":\"cluster\",\"exit_route\":{\"id\":\"$ROUTE_ID\",\"name\":\"nas\",\"src\":\"192.168.1.20\",\"router\":\"$HOME_ID\",\"via\":\"$VPS_ID\",\"exit_only\":true,\"enabled\":true}}" >/dev/null 2>&1 \
+  || { api vps node "{\"id\":\"$VPS_ID\",\"patch\":{\"exit\":true},\"scope\":\"cluster\"}" >/dev/null; api vps exitroute "{\"scope\":\"cluster\",\"exit_route\":{\"id\":\"$ROUTE_ID\",\"name\":\"nas\",\"src\":\"192.168.1.20\",\"router\":\"$HOME_ID\",\"via\":\"$VPS_ID\",\"exit_only\":true,\"enabled\":true}}" >/dev/null; api vps node "{\"id\":\"$VPS_ID\",\"patch\":{\"exit\":false},\"scope\":\"cluster\"}" >/dev/null; }
 sleep 8
 check "exit gone, exit only on: LAN device gets no internet (no leak via home)" "test -z \"\$(nasip)\""
-api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"exit_only\":false},\"scope\":\"cluster\"}" >/dev/null
 api vps node "{\"id\":\"$VPS_ID\",\"patch\":{\"exit\":true},\"scope\":\"cluster\"}" >/dev/null
-api vps node "{\"id\":\"$HOME_ID\",\"patch\":{\"lan_exits\":[]},\"scope\":\"cluster\"}" >/dev/null
+api vps delete "{\"kind\":\"exitroute\",\"id\":\"$ROUTE_ID\",\"scope\":\"cluster\"}" >/dev/null
 x nas ip route replace default via 192.168.1.1
 sleep 6
 check "LAN exit removed: NAS back on the home line" "test \"\$(nasip)\" = 198.51.100.20"

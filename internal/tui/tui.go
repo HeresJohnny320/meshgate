@@ -18,13 +18,14 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/ops"
 )
 
-var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "DEVICES"}
+var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES"}
 
 const (
 	tabNodes = iota
 	tabForwards
 	tabHTTPS
 	tabRules
+	tabExits
 	tabDevices
 )
 
@@ -120,7 +121,7 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tab, m.sel = (m.tab+1)%len(tabs), 0
 	case "shift+tab", "left", "h":
 		m.tab, m.sel = (m.tab-1+len(tabs))%len(tabs), 0
-	case "1", "2", "3", "4", "5":
+	case "1", "2", "3", "4", "5", "6":
 		m.tab, m.sel = int(key[0]-'1'), 0
 	case "up", "k":
 		if m.sel > 0 {
@@ -192,6 +193,8 @@ func (m *model_) selectedLabel() string {
 		return "HTTPS route " + m.v.Routes[m.sel].Value.Hostname
 	case tabRules:
 		return "rule " + labelOr(m.v.ACLs[m.sel].Value.Name)
+	case tabExits:
+		return "exit route " + labelOr(m.v.ExitRoutes[m.sel].Value.Name)
 	case tabDevices:
 		return "token " + m.v.Tokens[m.sel].ID
 	}
@@ -222,6 +225,9 @@ func (m *model_) toggleItem() {
 	case tabRules:
 		a := m.v.ACLs[m.sel].Value
 		kind, id, on, what = model.KindACL, a.ID, a.Enabled, "Rule "+labelOr(a.Name)
+	case tabExits:
+		r := m.v.ExitRoutes[m.sel].Value
+		kind, id, on, what = model.KindExitRoute, r.ID, r.Enabled, "Exit route "+labelOr(r.Name)
 	default:
 		return
 	}
@@ -249,6 +255,8 @@ func (m *model_) rows() int {
 		return len(m.v.Routes)
 	case tabRules:
 		return len(m.v.ACLs)
+	case tabExits:
+		return len(m.v.ExitRoutes)
 	case tabDevices:
 		return len(m.v.Tokens)
 	}
@@ -328,6 +336,8 @@ func (m *model_) newItem() {
 		m.routeForm(nil)
 	case tabRules:
 		m.aclForm(nil)
+	case tabExits:
+		m.exitRouteForm(nil)
 	case tabDevices:
 		m.tokenForm()
 	}
@@ -349,6 +359,9 @@ func (m *model_) editItem() {
 	case tabRules:
 		it := m.v.ACLs[m.sel]
 		m.aclForm(&it)
+	case tabExits:
+		it := m.v.ExitRoutes[m.sel]
+		m.exitRouteForm(&it)
 	}
 }
 
@@ -366,6 +379,8 @@ func (m *model_) deleteItem() {
 		kind, id = model.KindRoute, m.v.Routes[m.sel].Value.ID
 	case tabRules:
 		kind, id = model.KindACL, m.v.ACLs[m.sel].Value.ID
+	case tabExits:
+		kind, id = model.KindExitRoute, m.v.ExitRoutes[m.sel].Value.ID
 	case tabDevices:
 		kind, id = model.KindToken, m.v.Tokens[m.sel].ID
 	}
@@ -387,6 +402,8 @@ func (m *model_) clearLocal() {
 		kind, id = model.KindRoute, m.v.Routes[m.sel].Value.ID
 	case m.tab == tabRules && m.rows() > 0:
 		kind, id = model.KindACL, m.v.ACLs[m.sel].Value.ID
+	case m.tab == tabExits && m.rows() > 0:
+		kind, id = model.KindExitRoute, m.v.ExitRoutes[m.sel].Value.ID
 	default:
 		return
 	}
@@ -529,6 +546,33 @@ func policyOf(n model.Node) string {
 
 // aclForm edits an access rule. Devices are entered by name, comma
 // separated; empty means any device.
+// exitRouteForm edits an exit route (a LAN device sent through an exit).
+func (m *model_) exitRouteForm(it *ops.Item[model.ExitRoute]) {
+	r := model.ExitRoute{Enabled: true}
+	title, local := "New exit route", false
+	if it != nil {
+		r, local, title = it.Value, it.Local, "Edit exit route "+it.Value.Name
+	}
+	routers := []option{{"automatic (from the IP)", ""}}
+	for _, n := range m.v.Nodes {
+		if n.Value.Kind == model.NodeServer && len(n.Value.Routes) > 0 {
+			routers = append(routers, option{n.Value.Name, n.Value.ID})
+		}
+	}
+	m.form = newForm(title, func(v map[string]string) error {
+		nr := model.ExitRoute{ID: r.ID, Name: v["name"], Src: v["src"], Router: v["router"], Via: v["via"],
+			ExitOnly: v["exit_only"] == "true", Enabled: v["enabled"] == "true"}
+		return m.api.Post("exitroute", map[string]any{"exit_route": nr, "scope": v["scope"]}, nil)
+	}).
+		text("name", "Name", r.Name, "gaming-vm").
+		text("src", "Device IP or subnet", r.Src, "192.168.200.11").
+		choice("via", "Exit node", exitChoices(m.exitOptions("")[1:]), r.Via).
+		choice("router", "Router", routers, r.Router).
+		toggle("exit_only", "Exit only (no internet if no exit reachable)", r.ExitOnly).
+		toggle("enabled", "Enabled", r.Enabled).
+		choice("scope", "Apply to", scopeOptions(m.name(m.v.SelfID)), scopeOf(local)).init()
+}
+
 func (m *model_) aclForm(it *ops.Item[model.ACL]) {
 	a := model.ACL{Proto: "tcp", Enabled: true, To: model.ToSelf}
 	title := "New access rule"

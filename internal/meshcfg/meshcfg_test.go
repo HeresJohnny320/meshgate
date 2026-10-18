@@ -1,6 +1,7 @@
 package meshcfg
 
 import (
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -164,8 +165,8 @@ func lanExitInput(exitOn bool) Input {
 
 func TestLANExit(t *testing.T) {
 	c, _ := Build(lanExitInput(true))
-	if c.LANExitVia != "vps" || c.LANExitDown || len(c.LANExitSrcs) != 2 {
-		t.Fatalf("via=%q down=%v srcs=%v", c.LANExitVia, c.LANExitDown, c.LANExitSrcs)
+	if c.LANExitVia != "vps" || len(c.LANExitBlock) != 0 || len(c.LANExitSrcs) != 2 {
+		t.Fatalf("via=%q block=%v srcs=%v", c.LANExitVia, c.LANExitBlock, c.LANExitSrcs)
 	}
 	if got := ips(peer(t, c, "vps")); !strings.HasPrefix(got, "0.0.0.0/0,") {
 		t.Fatalf("vps allowed = %s", got)
@@ -180,13 +181,13 @@ func TestLANExit(t *testing.T) {
 func TestLANExitFailsClosed(t *testing.T) {
 	in0 := lanExitInput(false) // vps no longer offered as exit
 	c, _ := Build(in0)
-	if c.LANExitDown || len(c.LANExitSrcs) != 0 {
-		t.Fatalf("without exit only, LAN exits must fall back to the normal connection: down=%v srcs=%v", c.LANExitDown, c.LANExitSrcs)
+	if len(c.LANExitBlock) != 0 || len(c.LANExitSrcs) != 0 {
+		t.Fatalf("without exit only, LAN exits must fall back to the normal connection: block=%v srcs=%v", c.LANExitBlock, c.LANExitSrcs)
 	}
 	in0.Self.ExitOnly = true
 	c, _ = Build(in0)
-	if c.LANExitVia != "" || !c.LANExitDown || strings.Contains(ips(peer(t, c, "vps")), "0.0.0.0/0") {
-		t.Fatalf("via=%q down=%v", c.LANExitVia, c.LANExitDown)
+	if c.LANExitVia != "" || len(c.LANExitBlock) != 2 || strings.Contains(ips(peer(t, c, "vps")), "0.0.0.0/0") {
+		t.Fatalf("via=%q block=%v", c.LANExitVia, c.LANExitBlock)
 	}
 	// Preserve-client-IP through a different edge needs the default route.
 	in := lanExitInput(true)
@@ -197,13 +198,13 @@ func TestLANExitFailsClosed(t *testing.T) {
 	in.Forwards = []model.Forward{{ID: "mc", Name: "mc", Proto: model.ProtoTCP, EdgeNode: "vps2", ListenPort: 25565,
 		TargetNode: "home", TargetPort: 25565, PreserveClientIP: true, Enabled: true}}
 	c, _ = Build(in)
-	if c.LANExitVia != "" || !c.LANExitDown {
-		t.Fatalf("conflict not caught: via=%q down=%v", c.LANExitVia, c.LANExitDown)
+	if c.LANExitVia != "" || len(c.LANExitBlock) == 0 {
+		t.Fatalf("conflict not caught: via=%q block=%v", c.LANExitVia, c.LANExitBlock)
 	}
 	// Not capable (Windows): ignored, nothing blocked.
 	in = lanExitInput(true)
 	in.LANExitCapable = false
-	if c, _ = Build(in); c.LANExitVia != "" || c.LANExitDown || len(c.LANExitSrcs) != 0 {
+	if c, _ = Build(in); c.LANExitVia != "" || len(c.LANExitBlock) != 0 || len(c.LANExitSrcs) != 0 {
 		t.Fatalf("incapable platform: %+v", c)
 	}
 }
@@ -276,5 +277,27 @@ func TestExitPermissions(t *testing.T) {
 	in.ExitChoice = "vps2"
 	if c, _ := Build(in); c.ExitVia != "vps2" {
 		t.Fatalf("device's own pick ignored: %q", c.ExitVia)
+	}
+}
+
+func TestExitRoutes(t *testing.T) {
+	v := vps
+	v.Exit = true
+	routes := []model.ExitRoute{
+		{ID: "a", Name: "gaming", Src: "192.168.200.11", Router: "home", Via: "vps", ExitOnly: true, Enabled: true},
+		{ID: "b", Name: "tv", Src: "192.168.200.12", Router: "home", Via: "vps", Enabled: true},
+		{ID: "c", Name: "off", Src: "192.168.200.13", Router: "home", Via: "vps", Enabled: false},
+		{ID: "d", Name: "elsewhere", Src: "10.0.0.5", Router: "other", Via: "vps", Enabled: true},
+	}
+	in := Input{Network: network, Self: home, Nodes: []model.Node{phone, home, v}, LANExitCapable: true, ExitRoutes: routes,
+		Paths: pathsel.Result{Paths: map[string]pathsel.Path{"vps": {Endpoint: "1.1.1.1:51820"}, "phone": {Via: "vps"}}}}
+	c, _ := Build(in)
+	if c.LANExitVia != "vps" || fmt.Sprint(c.LANExitSrcs) != "[192.168.200.11/32 192.168.200.12/32]" {
+		t.Fatalf("up: via=%q srcs=%v", c.LANExitVia, c.LANExitSrcs)
+	}
+	in.Paths.Up = map[string]bool{"vps": false}
+	c, _ = Build(in)
+	if len(c.LANExitSrcs) != 0 || fmt.Sprint(c.LANExitBlock) != "[192.168.200.11/32]" {
+		t.Fatalf("down: only the exit-only route may be blocked: srcs=%v block=%v", c.LANExitSrcs, c.LANExitBlock)
 	}
 }

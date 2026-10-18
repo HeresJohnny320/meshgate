@@ -19,14 +19,15 @@ import (
 
 // Record kinds. The kind is the first segment of a store key.
 const (
-	KindNetwork = "network" // singleton: "network/main"
-	KindNode    = "node"
-	KindStatus  = "status" // runtime status a node publishes about itself
-	KindForward = "forward"
-	KindRoute   = "httproute"
-	KindToken   = "token"
-	KindAdmin   = "admin" // web UI admin user(s)
-	KindACL     = "acl"   // access rules for traffic leaving the mesh
+	KindNetwork   = "network" // singleton: "network/main"
+	KindNode      = "node"
+	KindStatus    = "status" // runtime status a node publishes about itself
+	KindForward   = "forward"
+	KindRoute     = "httproute"
+	KindToken     = "token"
+	KindAdmin     = "admin"     // web UI admin user(s)
+	KindACL       = "acl"       // access rules for traffic leaving the mesh
+	KindExitRoute = "exitroute" // a LAN device/subnet sent through an exit node
 )
 
 // NodeKind separates infrastructure from roaming devices.
@@ -469,3 +470,21 @@ func (n Node) MayUseExit(ex string) bool {
 	}
 	return false
 }
+
+// ExitRoute sends the internet traffic of a LAN device or subnet behind a
+// router (Router, a server sharing that LAN) out through exit node Via. One
+// router uses one exit node at a time; if it is down the router fails over
+// to another exit, and with none left ExitOnly routes are blocked while the
+// others use the normal connection.
+type ExitRoute struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Src      string `json:"src"`    // "192.168.200.11" or "192.168.20.0/24"
+	Router   string `json:"router"` // node ID
+	Via      string `json:"via"`    // exit node ID
+	ExitOnly bool   `json:"exit_only,omitempty"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// Prefix parses Src.
+func (r ExitRoute) Prefix() (netip.Prefix, error) { return LANExit{Src: r.Src}.Prefix() }

@@ -27,6 +27,7 @@
         <button data-tab="forwards">Port forwards</button>
         <button data-tab="routes">HTTPS</button>
         <button data-tab="acls">Access rules</button>
+        <button data-tab="exits">Exit routes</button>
         <button data-tab="devices">Add devices</button>
         <button data-tab="tools">Tools</button>
         <button data-tab="settings">Settings</button>
@@ -52,6 +53,16 @@
         <div class="row-head"><h2>HTTPS routes</h2><button id="route-new">New route</button></div>
         <p class="hint">Point the hostname's DNS A record at the edge node's public IP. Certificates come from Let's Encrypt automatically.</p>
         <div class="table-wrap"><table id="routes"></table></div>
+      </section>
+
+      <section id="tab-exits" class="hidden">
+        <div class="row-head"><h2>Exit routes</h2><button id="exit-new">New exit route</button></div>
+        <p class="hint">Send a LAN device's (or a whole subnet's) internet traffic out through an exit node, e.g.
+          <code>192.168.200.11</code> → vps: websites then see the exit's IP. Everything else on your network keeps using
+          your normal connection, and every device can still reach the mesh. If the exit goes down, the router fails over
+          to another exit node; with none left, <i>Exit only</i> routes have no internet and the others use the normal
+          connection. One router uses one exit node at a time.</p>
+        <div class="table-wrap"><table id="exitroutes"></table></div>
       </section>
 
       <section id="tab-acls" class="hidden">

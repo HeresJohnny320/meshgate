@@ -227,6 +227,7 @@ async function refresh() {
   renderForwards();
   renderRoutes();
   renderACLs();
+  renderExitRoutes();
   renderTokens();
   const sel = $("#static-relay");
   const cur = sel.value;
@@ -280,7 +281,7 @@ function renderNodes(rt) {
       <td>${state}</td><td>${path}</td><td>${hs}</td>
       <td class="mono">${esc(p?.endpoint || "")}</td>
       <td>${p ? bytes(p.rx_bytes) + " / " + bytes(p.tx_bytes) : ""}</td>
-      <td class="mono">${esc((n.routes || []).join(", "))}${(n.routes || []).length ? ({ restricted: ' <span class="chip local">restricted</span>', firewall: ' <span class="chip local">pfSense rules</span>' }[n.lan_policy] || ' <span class="chip">open</span>') : ""}</td>
+      <td class="mono wrap">${esc((n.routes || []).join(", "))}${(n.routes || []).length ? ({ restricted: ' <span class="chip local">restricted</span>', firewall: ' <span class="chip local">pfSense rules</span>' }[n.lan_policy] || ' <span class="chip">open</span>') : ""}</td>
       <td class="actions">${updBtn}<button class="small" data-edit-node="${esc(n.id)}">Edit</button>
         ${n.id !== view.self_id ? `<button class="small danger" data-del="node:${esc(n.id)}">Remove</button>` : ""}</td></tr>`;
   });
@@ -332,6 +333,40 @@ function aclTarget(a) {
   const lans = view.statuses?.[a.node]?.lans || [];
   const lan = lans.find((l) => l.cidr === a.to);
   return lan ? `${a.to} (${lan.iface})` : a.to;
+}
+
+function renderExitRoutes() {
+  const rows = (view.exit_routes || []).map((it) => {
+    const r = it.value;
+    return `<tr><td><b>${esc(r.name)}</b>${localChip(it)}</td><td class="mono">${esc(r.src)}</td><td>${esc(nodeName(r.router))}</td>
+      <td>${esc(nodeName(r.via))}</td><td>${r.exit_only ? "yes" : "no"}</td>
+      <td>${r.enabled ? '<span class="dot ok"></span>on' : '<span class="chip">off</span>'}</td>
+      <td class="actions"><button class="small" data-toggle="exitroute:${esc(r.id)}:${r.enabled ? 0 : 1}">${r.enabled ? "Disable" : "Enable"}</button>
+      <button class="small" data-edit-exit="${esc(r.id)}">Edit</button>
+      <button class="small danger" data-del="exitroute:${esc(r.id)}">Delete</button></td></tr>`;
+  });
+  $("#exitroutes").innerHTML = `<tr><th>Name</th><th>Device IP / subnet</th><th>Router</th><th>Exit node</th><th>Exit only</th><th>State</th><th></th></tr>` +
+    (rows.join("") || '<tr><td colspan="7" class="empty">No exit routes yet</td></tr>');
+}
+
+function exitRouteDialog(it) {
+  const r = it?.value || { enabled: true, via: exits()[0]?.id };
+  const routerOpts = `<option value="">Automatic (the router sharing that IP's subnet)</option>` +
+    servers().filter((n) => (n.routes || []).length).map((n) => `<option value="${esc(n.id)}" ${n.id === r.router ? "selected" : ""}>${esc(n.name)} — ${esc((n.routes || []).join(", "))}</option>`).join("");
+  const exitOpts = exits().map((x) => `<option value="${esc(x.id)}" ${x.id === r.via ? "selected" : ""}>${esc(x.name)}</option>`).join("");
+  openDialog(it ? "Edit exit route" : "New exit route", `<div class="form-grid">
+    <label class="full">Name <input name="name" value="${esc(r.name)}" placeholder="gaming-vm" required></label>
+    <label>Device IP or subnet <input name="src" value="${esc(r.src)}" placeholder="192.168.200.11 or 192.168.20.0/24" required></label>
+    <label>Exit node <select name="via">${exitOpts || '<option value="">(tick "Exit node" on a VPS first)</option>'}</select></label>
+    <label class="full">Router <select name="router">${routerOpts}</select></label>
+    <label class="inline full"><input type="checkbox" name="exit_only" ${r.exit_only ? "checked" : ""}> Exit only: if no exit node is reachable, this device gets no internet (instead of your normal connection)</label>
+    <label class="inline full"><input type="checkbox" name="enabled" ${r.enabled ? "checked" : ""}> Enabled</label>
+    ${scopeField(it?.local)}</div>`,
+  async (fd) => {
+    await api("/api/exitroute", { scope: fd.get("scope"), exit_route: {
+      id: r.id || "", name: fd.get("name"), src: fd.get("src").trim(), router: fd.get("router"), via: fd.get("via"),
+      exit_only: fd.get("exit_only") === "on", enabled: fd.get("enabled") === "on" } });
+  });
 }
 
 function renderACLs() {
@@ -485,7 +520,7 @@ function nodeDialog(it) {
        <label class="full">Shared LAN subnets (one per line) <textarea name="routes" rows="2">${esc((n.routes || []).join("\n"))}</textarea></label>
        <label class="inline full"><input type="checkbox" name="relay" ${n.relay ? "checked" : ""}> Relay (public endpoint reachable from anywhere)</label>
        <label class="inline full"><input type="checkbox" name="exit" ${n.exit ? "checked" : ""}> Exit node (devices you pick send their internet traffic out through this node)</label>
-       <fieldset class="full lan-exit"><legend>Send LAN devices' internet through an exit node</legend>
+       ${(n.lan_exits || []).length ? `<fieldset class="full lan-exit"><legend>Older LAN exit list: please move these to the Exit routes tab, then clear them here</legend>
          <label>IPs or subnets behind this router, one per line (e.g. 192.168.1.205, 192.168.20.0/24 for a VLAN)
            <textarea name="lan_exit_src" rows="3">${esc((n.lan_exits || []).map((e) => e.src).join("\n"))}</textarea></label>
          <label>Through <select name="lan_exit_via">${exits().filter((x) => x.id !== n.id)
@@ -493,7 +528,7 @@ function nodeDialog(it) {
            || '<option value="">(no exit node yet — tick "Exit node" on a VPS first)</option>'}</select></label>
          <label class="inline"><input type="checkbox" name="exit_only" ${n.exit_only ? "checked" : ""}> Exit only: if no exit node is reachable, block their internet instead of using your normal connection</label>
          <p class="hint">Their internet traffic leaves through the exit (websites see its IP); if it goes down they move to
-           another exit node automatically. Your LAN and mesh stay reachable.</p></fieldset>
+           another exit node automatically. Your LAN and mesh stay reachable.</p></fieldset>` : `<p class="hint full">To send LAN devices' internet through an exit node, use the <b>Exit routes</b> tab.</p>`}
        <label class="inline full"><input type="checkbox" name="app_admin" ${n.app_admin_off ? "" : "checked"}> Phone app may manage the mesh through this node</label>
        <label class="full">Test service port (TCP+UDP, empty = off; see Tools) <input name="test_port" type="number" min="1" max="65535" value="${n.test_port || ""}" placeholder="off"></label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
@@ -526,6 +561,8 @@ document.addEventListener("click", async (e) => {
   if (t.id === "route-new") return routeDialog();
   if (t.id === "acl-new") return aclDialog();
   if (t.dataset.editAcl) return aclDialog(view.acls.find((x) => x.value.id === t.dataset.editAcl));
+  if (t.id === "exit-new") return exitRouteDialog();
+  if (t.dataset.editExit) return exitRouteDialog(view.exit_routes.find((x) => x.value.id === t.dataset.editExit));
   if (t.dataset.editFwd) return forwardDialog(view.forwards.find((x) => x.value.id === t.dataset.editFwd));
   if (t.dataset.editRoute) return routeDialog(view.routes.find((x) => x.value.id === t.dataset.editRoute));
   if (t.dataset.editNode) return nodeDialog(view.nodes.find((x) => x.value.id === t.dataset.editNode));
@@ -552,7 +589,7 @@ document.addEventListener("click", async (e) => {
   }
   if (t.dataset.del) {
     const [kind, id] = t.dataset.del.split(":");
-    if (!confirm(`Delete this ${{ httproute: "route", acl: "rule" }[kind] || kind}? This applies to all nodes.`)) return;
+    if (!confirm(`Delete this ${{ httproute: "route", acl: "rule", exitroute: "exit route" }[kind] || kind}? This applies to all nodes.`)) return;
     try { await api("/api/delete", { kind, id, scope: "cluster" }); refresh(); toast("Deleted"); } catch (err) { toast(err.message); }
   }
 });

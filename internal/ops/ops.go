@@ -67,15 +67,16 @@ type Item[T any] struct {
 
 // View is everything a UI needs to render.
 type View struct {
-	SelfID   string                  `json:"self_id"`
-	Network  model.Network           `json:"network"`
-	Nodes    []Item[model.Node]      `json:"nodes"`
-	Forwards []Item[model.Forward]   `json:"forwards"`
-	Routes   []Item[model.HTTPRoute] `json:"routes"`
-	ACLs     []Item[model.ACL]       `json:"acls"`
-	Tokens   []model.Token           `json:"tokens"`
-	Statuses map[string]model.Status `json:"statuses"`
-	Runtime  Runtime                 `json:"runtime"`
+	SelfID     string                  `json:"self_id"`
+	Network    model.Network           `json:"network"`
+	Nodes      []Item[model.Node]      `json:"nodes"`
+	Forwards   []Item[model.Forward]   `json:"forwards"`
+	Routes     []Item[model.HTTPRoute] `json:"routes"`
+	ACLs       []Item[model.ACL]       `json:"acls"`
+	ExitRoutes []Item[model.ExitRoute] `json:"exit_routes"`
+	Tokens     []model.Token           `json:"tokens"`
+	Statuses   map[string]model.Status `json:"statuses"`
+	Runtime    Runtime                 `json:"runtime"`
 }
 
 // View builds the current view.
@@ -86,6 +87,7 @@ func (s *Service) View() View {
 	v.Forwards = items[model.Forward](s.Store, model.KindForward)
 	v.Routes = items[model.HTTPRoute](s.Store, model.KindRoute)
 	v.ACLs = items[model.ACL](s.Store, model.KindACL)
+	v.ExitRoutes = items[model.ExitRoute](s.Store, model.KindExitRoute)
 	for _, t := range store.List[model.Token](s.Store, model.KindToken) {
 		t.SecretHash = ""
 		v.Tokens = append(v.Tokens, t)
@@ -192,6 +194,71 @@ func (s *Service) PutRoute(r model.HTTPRoute, scope store.Scope) (model.HTTPRout
 }
 
 // PutACL creates or updates an access rule.
+// PutExitRoute creates or updates an exit route. Without a router it picks
+// the server that shares a subnet containing the device.
+func (s *Service) PutExitRoute(r model.ExitRoute, scope store.Scope) (model.ExitRoute, error) {
+	if err := s.requireWriter(); err != nil {
+		return r, err
+	}
+	if r.ID == "" {
+		r.ID = join.RandomID()
+	}
+	r.Name = strings.TrimSpace(r.Name)
+	if err := model.CheckName(r.Name); err != nil {
+		return r, err
+	}
+	pfx, err := r.Prefix()
+	if err != nil {
+		return r, err
+	}
+	r.Src = pfx.String()
+	if netw, ok := store.Get[model.Network](s.Store, model.Key(model.KindNetwork, "main")); ok {
+		if mesh, err := netw.Prefix(); err == nil && mesh.Overlaps(pfx) {
+			return r, errors.New("that is the mesh range, not a LAN device")
+		}
+	}
+	nodes := store.List[model.Node](s.Store, model.KindNode)
+	if r.Router == "" {
+		for _, n := range nodes {
+			for _, sub := range n.Routes {
+				if p, err := netip.ParsePrefix(sub); err == nil && n.Kind == model.NodeServer && p.Masked().Contains(pfx.Addr()) && p.Bits() <= pfx.Bits() {
+					r.Router = n.ID
+				}
+			}
+		}
+		if r.Router == "" {
+			return r, fmt.Errorf("no node shares a subnet containing %s: add it to the router's Shared LAN subnets, or pick the router", r.Src)
+		}
+	}
+	router, ok := store.Get[model.Node](s.Store, model.Key(model.KindNode, r.Router))
+	if !ok || router.Kind != model.NodeServer {
+		return r, errors.New("pick the router those devices use (a server node)")
+	}
+	ex, ok := store.Get[model.Node](s.Store, model.Key(model.KindNode, r.Via))
+	if !ok || !ex.Exit || r.Via == r.Router {
+		return r, errors.New("pick a node offered as an exit node")
+	}
+	if r.Enabled {
+		for _, o := range store.List[model.ExitRoute](s.Store, model.KindExitRoute) {
+			if o.ID != r.ID && o.Enabled && o.Router == r.Router && o.Via != r.Via {
+				return r, fmt.Errorf("%s already sends LAN devices through %s (route %q): one router uses one exit node at a time for now",
+					router.Name, nameOf(nodes, o.Via), o.Name)
+			}
+		}
+	}
+	_, err = s.Store.Put(model.Key(model.KindExitRoute, r.ID), r, scope)
+	return r, err
+}
+
+func nameOf(nodes []model.Node, id string) string {
+	for _, n := range nodes {
+		if n.ID == id {
+			return n.Name
+		}
+	}
+	return id
+}
+
 func (s *Service) PutACL(a model.ACL, scope store.Scope) (model.ACL, error) {
 	if err := s.requireWriter(); err != nil {
 		return a, err
@@ -261,8 +328,16 @@ func (s *Service) Toggle(kind, id string, enabled bool) error {
 		v.Enabled = enabled
 		_, err := s.PutACL(v, scope)
 		return err
+	case model.KindExitRoute:
+		v, ok := store.Get[model.ExitRoute](s.Store, key)
+		if !ok {
+			return errors.New("no such exit route")
+		}
+		v.Enabled = enabled
+		_, err := s.PutExitRoute(v, scope)
+		return err
 	}
-	return errors.New("only forwards, routes and rules can be toggled")
+	return errors.New("only forwards, routes, rules and exit routes can be toggled")
 }
 
 func validPort(p int) bool { return p > 0 && p < 65536 }
@@ -582,6 +657,16 @@ func (s *Service) Handler(prefix string) http.Handler {
 		}
 		return s.PutRoute(b.Route, scopeOf(b.Scope))
 	})
+	route("POST exitroute", func(r *http.Request) (any, error) {
+		var b struct {
+			Route model.ExitRoute `json:"exit_route"`
+			Scope store.Scope     `json:"scope"`
+		}
+		if err := decode(r, &b); err != nil {
+			return nil, err
+		}
+		return s.PutExitRoute(b.Route, scopeOf(b.Scope))
+	})
 	route("POST acl", func(r *http.Request) (any, error) {
 		var b struct {
 			ACL   model.ACL   `json:"acl"`
@@ -618,7 +703,7 @@ func (s *Service) Handler(prefix string) http.Handler {
 		switch b.Kind {
 		case model.KindNode:
 			return nil, s.RemoveNode(b.ID)
-		case model.KindForward, model.KindRoute, model.KindToken, model.KindACL:
+		case model.KindForward, model.KindRoute, model.KindToken, model.KindACL, model.KindExitRoute:
 			_, err := s.Store.Delete(model.Key(b.Kind, b.ID), scopeOf(b.Scope))
 			return map[string]bool{"ok": true}, err
 		}

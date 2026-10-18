@@ -52,7 +52,7 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 			add(&n, "nat on %s inet proto %s from ! %s to %s port %s -> (%s:0) # %s", wg, proto, mesh, d.Dst, port, wg, pfComment(d.Name))
 		}
 	}
-	if len(p.LANExitSrcs) > 0 {
+	if len(p.LANExitSrcs) > 0 && p.LANExitGW != "" {
 		add(&n, "table <meshgate_private> const { %s }", strings.Join(PrivateNets, ", "))
 		add(&n, "nat on %s inet from { %s } to ! <meshgate_private> -> (%s:0) # LAN exit", wg, strings.Join(p.LANExitSrcs, ", "), wg)
 	}
@@ -80,7 +80,7 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 	}
 
 	// Filter rules.
-	if (len(p.ExitClients) > 0 && p.Restricted) || len(p.LANExitSrcs) > 0 {
+	if (len(p.ExitClients) > 0 && p.Restricted) || len(p.LANExitSrcs) > 0 || len(p.LANExitBlock) > 0 {
 		add(&f, "table <meshgate_private> const { %s }", strings.Join(PrivateNets, ", "))
 	}
 	// Anti-spoofing: mesh addresses only ever arrive through the tunnel.
@@ -88,12 +88,11 @@ func RenderPF(p Plan) (nat, rdr, filter string) {
 	add(&f, "block drop in quick on ! %s inet from %s to any # mesh address from outside", wg, mesh)
 	// LAN exits: route those devices' internet traffic to the exit node;
 	// without a usable exit they get no internet (never the home line).
-	if len(p.LANExitSrcs) > 0 {
-		srcs := strings.Join(p.LANExitSrcs, ", ")
-		if p.LANExitGW != "" {
-			add(&f, "pass in quick route-to (%s %s) inet from { %s } to ! <meshgate_private> keep state # LAN exit", wg, p.LANExitGW, srcs)
-		}
-		add(&f, "block drop in quick inet from { %s } to ! <meshgate_private> # LAN exit: internet only through the exit node", srcs)
+	if len(p.LANExitSrcs) > 0 && p.LANExitGW != "" {
+		add(&f, "pass in quick route-to (%s %s) inet from { %s } to ! <meshgate_private> keep state # LAN exit", wg, p.LANExitGW, strings.Join(p.LANExitSrcs, ", "))
+	}
+	if all := append(append([]string(nil), p.LANExitSrcs...), p.LANExitBlock...); len(all) > 0 {
+		add(&f, "block drop in quick inet from { %s } to ! <meshgate_private> # LAN exit: internet only through the exit node", strings.Join(all, ", "))
 	}
 	if p.WANIface != "" {
 		for _, a := range p.WANOpen {

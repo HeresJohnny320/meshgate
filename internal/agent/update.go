@@ -34,7 +34,7 @@ func (a *Agent) latestLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(6 * time.Hour):
+		case <-time.After(30 * time.Minute):
 		}
 	}
 }

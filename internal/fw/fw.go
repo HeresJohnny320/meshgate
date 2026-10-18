@@ -76,12 +76,14 @@ func RenderNFT(p Plan) string {
 	// Router side of LAN exits: their internet traffic leaves through the
 	// tunnel from our mesh address; anything else of theirs bound for the
 	// internet is dropped (no leak while the exit is down).
+	priv := strings.Join(PrivateNets, ", ")
 	if len(p.LANExitSrcs) > 0 {
-		srcs, priv := strings.Join(p.LANExitSrcs, ", "), strings.Join(PrivateNets, ", ")
 		post = append(post, fmt.Sprintf("\t\toifname %s ip saddr { %s } ip daddr != { %s } masquerade comment %s",
-			q(p.Iface), srcs, priv, q("LAN exit")))
+			q(p.Iface), strings.Join(p.LANExitSrcs, ", "), priv, q("LAN exit")))
+	}
+	if all := append(append([]string(nil), p.LANExitSrcs...), p.LANExitBlock...); len(all) > 0 {
 		fwdChain = append(fwdChain, fmt.Sprintf("\t\toifname != %s ip saddr { %s } ip daddr != { %s } drop comment %s",
-			q(p.Iface), srcs, priv, q("LAN exit: internet only through the exit node")))
+			q(p.Iface), strings.Join(all, ", "), priv, q("LAN exit: internet only through the exit node")))
 	}
 
 	// Target side of preserve-client-IP: remember connections that arrived

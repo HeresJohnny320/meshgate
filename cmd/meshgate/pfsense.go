@@ -88,12 +88,19 @@ func cmdPfSense(cfgPath string, args []string) error {
 			return err
 		}
 	}
+	// Only a first install hands mesh access to pfSense's MESHGATE rules;
+	// a reinstall or update keeps whatever LAN policy the admin chose since.
+	firstInstall := !pfsense.Installed()
 	if err := pfsense.WriteFiles(webui.Static(), cfg.Socket, agent.Version); err != nil {
 		return err
 	}
 	opt, err := pfsense.Configure("install")
 	if err != nil {
 		return err
+	}
+	if !firstInstall {
+		fmt.Println("pfSense GUI pages updated; LAN policy left as it is.")
+		return nil
 	}
 	if err := setPolicy(api, "", model.PolicyFirewall); err != nil {
 		return fmt.Errorf("set LAN policy: %w", err)

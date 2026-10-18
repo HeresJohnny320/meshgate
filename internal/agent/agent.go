@@ -280,10 +280,12 @@ func (a *Agent) reconcile(ctx context.Context) {
 	a.publishStatus(res, statuses[self.ID])
 	a.prev = &res
 
+	exitRoutes := store.List[model.ExitRoute](a.Store, model.KindExitRoute)
 	cfg, err := meshcfg.Build(meshcfg.Input{
 		Network: netw, Self: self, Nodes: nodes, Forwards: forwards, Paths: res,
 		LocalAddrs:     wg.LocalAddrs(a.Cfg.Iface),
 		LANExitCapable: runtime.GOOS == "linux" || runtime.GOOS == "freebsd",
+		ExitRoutes:     exitRoutes,
 	})
 	if err != nil {
 		a.warnings = []string{err.Error()}
@@ -310,7 +312,8 @@ func (a *Agent) reconcile(ctx context.Context) {
 			WGPort: listen, ProbePort: listen + probe.Offset, MeshPort: a.Cfg.MeshPort,
 			JoinPort: joinPort(a.Cfg.JoinListen), WebPort: webPort(a.Cfg.WebListen), WANIface: fw.DetectWAN(),
 			TestPort:    self.TestPort,
-			LANExitSrcs: prefixStrings(cfg.LANExitSrcs), LANExitGW: meshIPOf(nodes, cfg.LANExitVia), LANExitDown: cfg.LANExitDown,
+			LANExitSrcs: prefixStrings(cfg.LANExitSrcs), LANExitGW: meshIPOf(nodes, cfg.LANExitVia), LANExitBlock: prefixStrings(cfg.LANExitBlock),
+			ExitRoutes: exitRoutes,
 		})
 		warn = append(warn, plan.Warnings...)
 		if runtime.GOOS == "windows" {

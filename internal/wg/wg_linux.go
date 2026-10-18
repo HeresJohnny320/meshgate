@@ -31,6 +31,7 @@ const (
 	// route (LAN, VLAN and local routes win), then the exit table.
 	prioLANLocal = 5220
 	prioLANExit  = 5221
+	prioLANBlock = 5222
 )
 
 // Manager owns one interface.
@@ -216,25 +217,34 @@ func (m *Manager) applyNetwork(cfg meshcfg.Config) error {
 	if err := syncLANExitTable(link, cfg); err != nil {
 		return err
 	}
-	var srcs []netip.Prefix
-	if cfg.LANExitVia != "" || cfg.LANExitDown {
-		srcs = cfg.LANExitSrcs
+	var routed []netip.Prefix
+	if cfg.LANExitVia != "" {
+		routed = cfg.LANExitSrcs
 	}
-	syncSrcRules(prioLANLocal, unix.RT_TABLE_MAIN, true, srcs)
-	syncSrcRules(prioLANExit, fw.TableLANExit, false, srcs)
+	syncSrcRules(prioLANLocal, unix.RT_TABLE_MAIN, true, append(append([]netip.Prefix(nil), routed...), cfg.LANExitBlock...))
+	syncSrcRules(prioLANExit, fw.TableLANExit, false, routed)
+	syncSrcRules(prioLANBlock, fw.TableLANBlock, false, cfg.LANExitBlock)
 	return nil
 }
 
 func syncLANExitTable(link netlink.Link, cfg meshcfg.Config) error {
 	all := prefixToIPNet(netip.MustParsePrefix("0.0.0.0/0"))
-	var want *netlink.Route
-	switch {
-	case cfg.LANExitVia != "":
-		want = &netlink.Route{LinkIndex: link.Attrs().Index, Dst: all, Table: fw.TableLANExit, Scope: netlink.SCOPE_LINK}
-	case cfg.LANExitDown:
-		want = &netlink.Route{Dst: all, Table: fw.TableLANExit, Type: unix.RTN_BLACKHOLE}
+	var tunnel, block *netlink.Route
+	if cfg.LANExitVia != "" {
+		tunnel = &netlink.Route{LinkIndex: link.Attrs().Index, Dst: all, Table: fw.TableLANExit, Scope: netlink.SCOPE_LINK}
 	}
-	have, _ := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: fw.TableLANExit}, netlink.RT_FILTER_TABLE)
+	if len(cfg.LANExitBlock) > 0 {
+		block = &netlink.Route{Dst: all, Table: fw.TableLANBlock, Type: unix.RTN_BLACKHOLE}
+	}
+	if err := syncDefault(fw.TableLANExit, tunnel); err != nil {
+		return err
+	}
+	return syncDefault(fw.TableLANBlock, block)
+}
+
+// syncDefault makes want the only route in table (none when want is nil).
+func syncDefault(table int, want *netlink.Route) error {
+	have, _ := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
 	for _, r := range have {
 		if want == nil || r.Type != want.Type || r.LinkIndex != want.LinkIndex {
 			netlink.RouteDel(&r)
@@ -384,6 +394,7 @@ func (m *Manager) Down() {
 	ensureRule(prioReply, fw.TableReply, 0, false, false)
 	syncSrcRules(prioLANLocal, unix.RT_TABLE_MAIN, true, nil)
 	syncSrcRules(prioLANExit, fw.TableLANExit, false, nil)
+	syncSrcRules(prioLANBlock, fw.TableLANBlock, false, nil)
 	if m.uapi != nil {
 		m.uapi.Close()
 	}

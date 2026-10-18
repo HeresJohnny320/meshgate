@@ -152,6 +152,8 @@ func (m *model_) tabHint() string {
 		return "websites with automatic certificates"
 	case tabRules:
 		return "what mesh devices may reach on restricted nodes"
+	case tabExits:
+		return "LAN devices whose internet goes out through an exit node"
 	case tabDevices:
 		return "join tokens for new servers, phones and PCs"
 	}
@@ -166,6 +168,8 @@ func (m *model_) emptyText() string {
 		return "No HTTPS routes yet. Press A to publish a website."
 	case tabRules:
 		return "No access rules. They only matter on nodes whose LAN policy is RESTRICTED (edit the node on tab 1)."
+	case tabExits:
+		return "No exit routes. Press A to send a LAN device (e.g. 192.168.200.11) out through an exit node."
 	case tabDevices:
 		return "No tokens. Press A to create one, or W for a device using the official WireGuard app."
 	}
@@ -178,7 +182,7 @@ func (m *model_) footer(width int) string {
 	switch m.tab {
 	case tabNodes:
 		keys = append(keys, key{"E", "edit"}, key{"U", "update"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
-	case tabForwards, tabHTTPS, tabRules:
+	case tabForwards, tabHTTPS, tabRules, tabExits:
 		keys = append(keys, key{"A", "add"}, key{"E", "edit"}, key{"T", "on/off"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
 	case tabDevices:
 		keys = append(keys, key{"A", "new token"}, key{"W", "WireGuard app"}, key{"D", "revoke"})
@@ -290,6 +294,17 @@ func (m *model_) card(i, width int) string {
 				l3 += "   " + warnStyle.Render("node's LAN policy is OPEN: rule has no effect yet")
 			}
 		}
+	case tabExits:
+		it := m.v.ExitRoutes[i]
+		r := it.Value
+		l1 = marker + onOff(r.Enabled, "ENABLED", "DISABLED") + "  " + nameStyle(sel).Render(labelOr(r.Name)) + localTag(it.Local)
+		l2 = labelStyle.Render("DEVICE ") + addressStyle.Render(r.Src) + labelStyle.Render("   BEHIND ") + selectedStyle.Render(m.name(r.Router)) +
+			mutedStyle.Render("   ->   EXIT ") + publicStyle.Render(m.name(r.Via))
+		if r.ExitOnly {
+			l3 = labelStyle.Render("EXIT ONLY ") + warnStyle.Render("no internet if no exit node is reachable")
+		} else {
+			l3 = labelStyle.Render("FALLBACK ") + mutedStyle.Render("normal connection if no exit node is reachable")
+		}
 	case tabDevices:
 		t := m.v.Tokens[i]
 		uses := fmt.Sprint(t.UsesLeft)
@@ -328,6 +343,9 @@ func (m *model_) row(i, width int) string {
 	case tabRules:
 		a := m.v.ACLs[i].Value
 		text = onOff(a.Enabled, "ON ", "OFF") + " " + labelOr(a.Name) + mutedStyle.Render(" -> ") + addressStyle.Render(m.aclTarget(a)) + " " + protocolStyle.Render(protoLabel(a.Proto)+" "+a.Ports)
+	case tabExits:
+		r := m.v.ExitRoutes[i].Value
+		text = onOff(r.Enabled, "ON ", "OFF") + " " + labelOr(r.Name) + mutedStyle.Render(" ") + addressStyle.Render(r.Src) + mutedStyle.Render(" -> ") + publicStyle.Render(m.name(r.Via))
 	case tabDevices:
 		t := m.v.Tokens[i]
 		text = mutedStyle.Render("#"+t.ID) + " " + string(t.Kind) + " " + t.Note

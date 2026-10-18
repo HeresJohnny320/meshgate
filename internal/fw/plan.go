@@ -20,12 +20,13 @@ import (
 
 // Marks and routing tables shared with the wg package (Linux).
 const (
-	MarkBypass   = 0x4d46 // sockets that must not use mesh routes (WireGuard, probes)
-	MarkPreserve = 0x4d47 // replies of preserve-client-IP connections (target side)
-	MarkEdgeKeep = 0x4d48 // edge: DNATed connection that must not be masqueraded
-	TableRoutes  = 51820  // subnet routes through the mesh
-	TableReply   = 51821  // default route over the mesh for MarkPreserve
-	TableLANExit = 51822  // default route (or blackhole) for LAN devices sent to an exit node
+	MarkBypass    = 0x4d46 // sockets that must not use mesh routes (WireGuard, probes)
+	MarkPreserve  = 0x4d47 // replies of preserve-client-IP connections (target side)
+	MarkEdgeKeep  = 0x4d48 // edge: DNATed connection that must not be masqueraded
+	TableRoutes   = 51820  // subnet routes through the mesh
+	TableReply    = 51821  // default route over the mesh for MarkPreserve
+	TableLANExit  = 51822  // default route for LAN devices sent to an exit node
+	TableLANBlock = 51823  // blackhole for exit-only LAN devices while no exit is reachable
 )
 
 // Input describes what this node needs.
@@ -47,11 +48,13 @@ type Input struct {
 	TestPort int
 	// WANIface is the internet-facing interface (pf only).
 	WANIface string
-	// LAN exits (meshcfg.Config): LAN sources sent to the exit node at mesh
-	// IP LANExitGW, or blocked from the internet while LANExitDown.
-	LANExitSrcs []string
-	LANExitGW   string
-	LANExitDown bool
+	// Exit routes (meshcfg.Config): LAN sources sent to the exit node at
+	// mesh IP LANExitGW, and LAN sources with no internet right now.
+	LANExitSrcs  []string
+	LANExitGW    string
+	LANExitBlock []string
+	// ExitRoutes: routers with exit routes may use this node as an exit.
+	ExitRoutes []model.ExitRoute
 }
 
 // DNAT is one forward on an edge node.
@@ -91,10 +94,11 @@ type Plan struct {
 	// node: their internet traffic is masqueraded out of this host.
 	ExitClients []string
 	// LANExitSrcs (router side): LAN devices whose internet traffic goes
-	// to the exit node at LANExitGW; never out of this router's own
-	// internet line, even while the exit is down.
-	LANExitSrcs []string
-	LANExitGW   string
+	// to the exit node at LANExitGW. LANExitBlock: LAN devices without
+	// internet right now. Neither ever leaves through this router's own line.
+	LANExitSrcs  []string
+	LANExitGW    string
+	LANExitBlock []string
 	// PreserveEdgeIP is the mesh IP of the edge delivering real client IPs.
 	PreserveEdgeIP string
 	// PreserveIn lists those inbound services (pf needs them for reply-to).
@@ -111,6 +115,16 @@ type Plan struct {
 	// Own are meshgate's own services over the mesh (sync, web UI).
 	Own      []Allow
 	Warnings []string
+}
+
+func validPrefixes(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if pfx, err := netip.ParsePrefix(s); err == nil && pfx.Addr().Is4() {
+			out = append(out, pfx.Masked().String())
+		}
+	}
+	return out
 }
 
 func validIPv4(s string) bool {
@@ -213,22 +227,25 @@ func Build(in Input) Plan {
 		p.PreserveEdgeIP = e.MeshIP
 	}
 	if in.Self.Exit {
+		routers := map[string]bool{}
+		for _, r := range in.ExitRoutes {
+			if r.Enabled {
+				routers[r.Router] = true
+			}
+		}
 		for _, n := range in.Nodes {
 			// Devices allowed to use this exit (their permissions).
-			if n.ID != in.Self.ID && n.MayUseExit(in.Self.ID) && validIPv4(n.MeshIP) {
+			if n.ID != in.Self.ID && (n.MayUseExit(in.Self.ID) || routers[n.ID]) && validIPv4(n.MeshIP) {
 				p.ExitClients = append(p.ExitClients, n.MeshIP)
 			}
 		}
 		sort.Strings(p.ExitClients)
 	}
-	for _, s := range in.LANExitSrcs {
-		if pfx, err := netip.ParsePrefix(s); err == nil {
-			p.LANExitSrcs = append(p.LANExitSrcs, pfx.String())
-		}
-	}
-	if len(p.LANExitSrcs) > 0 && !in.LANExitDown && validIPv4(in.LANExitGW) {
+	if validIPv4(in.LANExitGW) {
 		p.LANExitGW = in.LANExitGW
+		p.LANExitSrcs = validPrefixes(in.LANExitSrcs)
 	}
+	p.LANExitBlock = validPrefixes(in.LANExitBlock)
 	// Never block a port an enabled forward is using.
 	kept := p.Blocked[:0]
 	for _, b := range p.Blocked {

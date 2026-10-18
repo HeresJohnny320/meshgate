@@ -400,8 +400,8 @@ func TestLANExitRules(t *testing.T) {
 	if !strings.Contains(filter, pass) || !strings.Contains(filter, block) || strings.Index(filter, pass) > strings.Index(filter, block) {
 		t.Errorf("pf filter:\n%s", filter)
 	}
-	// Exit down: only the block remains (fail closed).
-	i.LANExitDown = true
+	// Exit down, exit only: only the block remains (fail closed).
+	i.LANExitGW, i.LANExitSrcs, i.LANExitBlock = "", nil, []string{"192.168.1.205/32", "192.168.20.0/24"}
 	if _, _, f := RenderPF(Build(i)); strings.Contains(f, "route-to") || !strings.Contains(f, block) {
 		t.Errorf("exit down:\n%s", f)
 	}
