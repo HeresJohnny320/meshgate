@@ -113,6 +113,11 @@ func (m *model_) listView(width int) string {
 	switch {
 	case n == 0:
 		body = []string{panel(width, quietBorder, mutedStyle.Render(m.emptyText()))}
+	case m.tab == tabChanges:
+		start, end := window(m.sel, n, max(1, available))
+		for i := start; i < end; i++ {
+			body = append(body, line(width, changeLine(changeLines[i], i == m.sel)))
+		}
 	case width >= minBoxedWidth && available >= cardHeight*min(n, 2):
 		capacity := max(1, available/cardHeight)
 		start, end := window(m.sel, n, capacity)
@@ -154,6 +159,8 @@ func (m *model_) tabHint() string {
 		return "what mesh devices may reach on restricted nodes"
 	case tabExits:
 		return "LAN devices whose internet goes out through an exit node"
+	case tabChanges:
+		return "what changed in each version (+ added, - removed, ~ changed or fixed)"
 	case tabDevices:
 		return "join tokens for new servers, phones and PCs"
 	}
@@ -559,4 +566,23 @@ func protoLabel(p string) string {
 		return "tcp+udp"
 	}
 	return p
+}
+
+// changeLine colours one changelog line: + green, - red, ~ yellow.
+func changeLine(l string, sel bool) string {
+	marker := "  "
+	if sel {
+		marker = selectedStyle.Render("> ")
+	}
+	switch {
+	case strings.HasPrefix(l, "## "):
+		return marker + sectionStyle.Render(strings.TrimPrefix(l, "## "))
+	case strings.HasPrefix(l, "+ "):
+		return marker + enabledStyle.Render("+ ") + l[2:]
+	case strings.HasPrefix(l, "- "):
+		return marker + errStyle.Render("- ") + l[2:]
+	case strings.HasPrefix(l, "~ "):
+		return marker + warnStyle.Render("~ ") + l[2:]
+	}
+	return marker + mutedStyle.Render(l)
 }

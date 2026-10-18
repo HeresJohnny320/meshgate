@@ -271,7 +271,7 @@ sudo meshgate tui
 ```
 
 Sections: `1` Nodes, `2` Forwards, `3` HTTPS, `4` Rules, `5` Exit routes,
-`6` Devices (or `Tab`). Keys: `a` add, `e` edit, `t` turn on/off, `d` delete, `c` drop a
+`6` Devices, `7` Changes (or `Tab`). Keys: `a` add, `e` edit, `t` turn on/off, `d` delete, `c` drop a
 local-only override, `w` WireGuard app config, `s` settings, `y` theme, `r`
 refresh, `q` quit.
 
@@ -508,6 +508,12 @@ one machine). `c` in the TUI drops a local override again.
   remotely). This needs the APK release-signed (see *Releases*), otherwise
   Android refuses to install it over the old one.
 - Running the install command again also still works, and keeps your settings.
+
+**What changed:** the dashboard's **Changelog** tab, the TUI's **CHANGES** tab
+(`7`) and the app's **Updates → What's new** show the changes of the version
+you run (`+` added, `-` removed, `~` changed or fixed). The file is
+[internal/changelog/CHANGELOG.md](internal/changelog/CHANGELOG.md); new entries go
+under `## Unreleased`, which each release build stamps with its version.
 
 **Uninstall:**
 

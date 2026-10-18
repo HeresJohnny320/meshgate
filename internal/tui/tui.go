@@ -12,13 +12,25 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/heresjohnny320/meshgate/internal/changelog"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/localapi"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/ops"
 )
 
-var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES"}
+var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES", "CHANGES"}
+
+// changeLines is the changelog shown on the CHANGES tab.
+var changeLines = func() []string {
+	var out []string
+	for _, l := range strings.Split(changelog.Text, "\n") {
+		if strings.TrimSpace(l) != "" && !strings.HasPrefix(l, "# ") {
+			out = append(out, l)
+		}
+	}
+	return out
+}()
 
 const (
 	tabNodes = iota
@@ -27,6 +39,7 @@ const (
 	tabRules
 	tabExits
 	tabDevices
+	tabChanges
 )
 
 type viewMsg struct {
@@ -121,7 +134,7 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tab, m.sel = (m.tab+1)%len(tabs), 0
 	case "shift+tab", "left", "h":
 		m.tab, m.sel = (m.tab-1+len(tabs))%len(tabs), 0
-	case "1", "2", "3", "4", "5", "6":
+	case "1", "2", "3", "4", "5", "6", "7":
 		m.tab, m.sel = int(key[0]-'1'), 0
 	case "up", "k":
 		if m.sel > 0 {
@@ -257,6 +270,8 @@ func (m *model_) rows() int {
 		return len(m.v.ACLs)
 	case tabExits:
 		return len(m.v.ExitRoutes)
+	case tabChanges:
+		return len(changeLines)
 	case tabDevices:
 		return len(m.v.Tokens)
 	}

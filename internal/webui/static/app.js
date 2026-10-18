@@ -89,11 +89,28 @@ $("#tabs").addEventListener("click", (e) => {
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + b.dataset.tab));
   clearInterval(trafficTimer);
+  if (b.dataset.tab === "changelog") renderChangelog().catch((err) => toast(err.message));
   if (b.dataset.tab === "traffic") {
     refreshTraffic().catch((err) => toast(err.message));
     trafficTimer = setInterval(() => refreshTraffic().catch(() => {}), 3000);
   }
 });
+
+// ---------- changelog ----------
+
+// The changelog of the version this node runs: "## " starts a version,
+// "+" added (green), "-" removed (red), "~" changed or fixed (yellow).
+async function renderChangelog() {
+  const { text } = await api("/api/changelog");
+  const code = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+  $("#changelog").innerHTML = text.split("\n").map((l) => {
+    if (l.startsWith("## ")) return `<h3>${code(l.slice(3))}</h3>`;
+    const kind = { "+": "add", "-": "del", "~": "chg" }[l[0]];
+    if (kind && l[1] === " ") return `<div class="cl cl-${kind}"><b>${esc(l[0])}</b><span>${code(l.slice(2))}</span></div>`;
+    if (l.startsWith("# ") || !l.trim()) return "";
+    return `<p class="hint">${code(l)}</p>`;
+  }).join("");
+}
 
 // ---------- traffic ----------
 

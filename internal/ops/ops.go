@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/heresjohnny320/meshgate/internal/changelog"
 	"github.com/heresjohnny320/meshgate/internal/diag"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/model"
@@ -623,6 +624,9 @@ func (s *Service) Handler(prefix string) http.Handler {
 		}
 		msg, err := s.Update(b.Node)
 		return map[string]string{"message": msg}, err
+	})
+	route("GET changelog", func(r *http.Request) (any, error) {
+		return map[string]string{"text": changelog.Text}, nil
 	})
 	route("GET traffic", func(r *http.Request) (any, error) {
 		if s.Traffic == nil {

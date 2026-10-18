@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/heresjohnny320/meshgate/internal/changelog"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/store"
 	"github.com/heresjohnny320/meshgate/internal/update"
@@ -194,3 +195,6 @@ func (e *Engine) DownloadAPK(tag, path string) error {
 	}
 	return os.WriteFile(path, b, 0o600)
 }
+
+// Changelog returns the changelog of this app's version (CHANGELOG.md).
+func (e *Engine) Changelog() string { return changelog.Text }

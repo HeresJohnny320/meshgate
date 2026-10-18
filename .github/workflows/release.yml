@@ -64,6 +64,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+      - name: stamp the changelog with this version
+        run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" internal/changelog/CHANGELOG.md
       - name: build Linux, FreeBSD/pfSense and Windows
         run: make release VERSION=${{ needs.version.outputs.tag }}
       - uses: actions/upload-artifact@v4
@@ -90,6 +92,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - name: stamp the changelog with this version
+        run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" internal/changelog/CHANGELOG.md
       - name: Go core (gomobile)
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest

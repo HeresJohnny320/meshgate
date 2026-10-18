@@ -23,6 +23,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -358,6 +359,8 @@ fun UpdateCard(activity: Activity) {
     }
     var latest by remember { mutableStateOf<String?>(null) }
     var state by remember { mutableStateOf("") }
+    var showChanges by remember { mutableStateOf(false) }
+    if (showChanges) ChangelogDialog { showChanges = false }
     LaunchedEffect(Unit) { latest = withContext(Dispatchers.IO) { Mesh.engine.updateAvailable(current) } }
     ElevatedCard(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -372,6 +375,7 @@ fun UpdateCard(activity: Activity) {
                     },
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                TextButton(onClick = { showChanges = true }, contentPadding = PaddingValues(0.dp)) { Text("What's new") }
             }
             val tag = latest
             if (!tag.isNullOrEmpty()) {
@@ -394,6 +398,38 @@ fun UpdateCard(activity: Activity) {
             }
         }
     }
+}
+
+/** The changelog built into this version: + added, - removed, ~ changed or fixed. */
+@Composable
+fun ChangelogDialog(onDone: () -> Unit) {
+    val lines = remember { Mesh.engine.changelog().lines().filter { it.isNotBlank() && !it.startsWith("# ") } }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("What's new") },
+        text = {
+            LazyColumn(Modifier.heightIn(max = 480.dp)) {
+                items(lines) { l ->
+                    val (sign, color) = when {
+                        l.startsWith("+ ") -> "+" to Color(0xFF2E9E5B)
+                        l.startsWith("- ") -> "-" to MaterialTheme.colorScheme.error
+                        l.startsWith("~ ") -> "~" to Color(0xFFD08A1E)
+                        else -> "" to Color.Unspecified
+                    }
+                    when {
+                        l.startsWith("## ") -> Text(l.removePrefix("## "), style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                        sign.isNotEmpty() -> Row(Modifier.padding(vertical = 2.dp)) {
+                            Text(sign, color = color, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, modifier = Modifier.width(16.dp))
+                            Text(l.drop(2).replace("`", ""), style = MaterialTheme.typography.bodySmall)
+                        }
+                        else -> Text(l.replace("`", ""), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text("Close") } },
+    )
 }
 
 /** Choose among the exit nodes this phone may use (its permissions). */
