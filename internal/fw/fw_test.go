@@ -479,6 +479,11 @@ func iptCheck(t *testing.T, rules [][]string) {
 		script.WriteString("\n")
 	}
 	if out, err := exec.Command("unshare", "-r", "-n", "sh", "-c", script.String()).CombinedOutput(); err != nil {
+		// CI runners may forbid unprivileged namespaces; the root lab
+		// applies these rules for real there.
+		if strings.Contains(string(out), "Operation not permitted") || strings.Contains(string(out), "unshare failed") {
+			t.Skipf("cannot create netns: %s", out)
+		}
 		t.Fatalf("iptables rejected the rules: %v\n%s", err, out)
 	}
 }
