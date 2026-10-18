@@ -269,14 +269,16 @@ x inet ip link set i-vps up; x inet ip link set i-vps2 up
 i=0; while [ -z "$(pj "print(s.get('exit',''))")" ] && [ $i -lt 90 ]; do i=$((i+1)); sleep 1; done
 check "exits back: phone's internet returns through an exit" "myip | grep -q '^203.0.11[34].10$'"
 api vps node "{\"id\":\"$PHONE_ID\",\"patch\":{\"exit_only\":false},\"scope\":\"cluster\"}" >/dev/null
-T=$(date +%s); i=0; while [ "$(pj "print(s.get('last_sync',0))")" -le "$T" ] && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
+i=0; while [ "$(pj "print(s.get('exit_only'))")" != False ] && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
 
 echo; echo "== the phone's own kill switch (admin's exit only is off)"
 echo 'killswitch on' > "$D/phone.cmd"; sleep 6
 x inet ip link set i-vps down; x inet ip link set i-vps2 down
 i=0; while [ "$(pj "print(s.get('exit_blocked',False))")" != True ] && [ $i -lt 60 ]; do i=$((i+1)); sleep 1; done
 check "kill switch: every exit down blocks the phone's internet" "test -z \"\$(myip)\""
-echo 'killswitch off' > "$D/phone.cmd"; sleep 6
+echo 'killswitch off' > "$D/phone.cmd"
+i=0; while [ "$(myip)" != 198.18.3.60 ] && [ $i -lt 20 ]; do i=$((i+1)); sleep 1; done
+[ "$(myip)" = 198.18.3.60 ] || pj "print(s.get('kill_switch'), s.get('exit_only'), s.get('exit_blocked'), s.get('warnings'))"
 check "kill switch off: own connection again" "test \"\$(myip)\" = 198.18.3.60"
 x inet ip link set i-vps up; x inet ip link set i-vps2 up
 i=0; while [ -z "$(pj "print(s.get('exit',''))")" ] && [ $i -lt 90 ]; do i=$((i+1)); sleep 1; done
@@ -384,7 +386,7 @@ class H(http.server.BaseHTTPRequestHandler):
         b = open(p, "rb").read(); self.send_response(200); self.send_header("Content-Length", str(len(b))); self.end_headers()
         if body: self.wfile.write(b)
 http.server.HTTPServer(("0.0.0.0", 7080), H).serve_forever()' "$D/rel" > /dev/null 2>&1 & echo $! > "$D/rel.pid"
-export MESHGATE_UPDATE_URL=http://198.18.1.5:7080
+export MESHGATE_UPDATE_URL=http://198.18.1.5:7080 MESHGATE_UPDATE_DEV=1 # CI binaries are git-hash builds
 cp "$BIN" "$D/meshgate-home"
 kill "$(cat "$D/home.pid")"; while kill -0 "$(cat "$D/home.pid")" 2>/dev/null; do sleep 0.2; done
 BIN_SAVED=$BIN; BIN="$D/meshgate-home"; start home; BIN=$BIN_SAVED
@@ -395,7 +397,7 @@ i=0; while kill -0 "$HOME_PID" 2>/dev/null && [ $i -lt 60 ]; do i=$((i+1)); slee
 check "home installed the verified release and exited to restart" "! kill -0 $HOME_PID 2>/dev/null && cmp -s '$D/meshgate-home' '$D/rel/meshgate-linux-amd64'"
 BIN="$D/meshgate-home"; start home; BIN=$BIN_SAVED
 check "home runs again after the update" "api home view >/dev/null"
-unset MESHGATE_UPDATE_URL
+unset MESHGATE_UPDATE_URL MESHGATE_UPDATE_DEV
 
 if [ "$FAILED" = 1 ]; then
   echo "--- phone log"; tail -30 "$D/phone.log"

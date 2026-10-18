@@ -60,10 +60,14 @@ func Latest(ctx context.Context) (string, error) {
 }
 
 // Newer reports whether latest is a newer release than current. Development
-// builds ("dev", git hashes) never count as older, so they are not replaced.
+// builds ("dev", git hashes) never count as older, so they are not replaced
+// (MESHGATE_UPDATE_DEV=1 allows it, for tests).
 func Newer(current, latest string) bool {
 	c, ok1 := parse(current)
 	l, ok2 := parse(latest)
+	if !ok1 && ok2 && os.Getenv("MESHGATE_UPDATE_DEV") == "1" {
+		return true
+	}
 	if !ok1 || !ok2 {
 		return false
 	}

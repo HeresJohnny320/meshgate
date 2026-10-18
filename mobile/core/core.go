@@ -617,6 +617,8 @@ type status struct {
 	// ExitBlocked: exit only, and no exit node reachable: no internet.
 	ExitBlocked bool `json:"exit_blocked,omitempty"`
 	KillSwitch  bool `json:"kill_switch"`
+	// ExitOnly: the admin requires this device to use exits only.
+	ExitOnly bool `json:"exit_only"`
 	// Permissions, as the admin set them: the exit nodes this device may
 	// use (with live state) and what it may reach.
 	Exits      []exitOption `json:"exits"`
@@ -768,7 +770,7 @@ func (e *Engine) StatusJSON() string {
 	st.Access = accessFor(self, nodes, store.List[model.ACL](e.store, model.KindACL))
 	for _, n := range nodes {
 		if n.ID == e.id.NodeID {
-			st.Name, st.MeshIP, st.ExitWanted = n.Name, n.MeshIP, names[n.ExitVia]
+			st.Name, st.MeshIP, st.ExitWanted, st.ExitOnly = n.Name, n.MeshIP, names[n.ExitVia], n.ExitOnly
 			continue
 		}
 		if n.WebUI && n.MeshIP != "" {

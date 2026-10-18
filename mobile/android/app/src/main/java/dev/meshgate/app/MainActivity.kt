@@ -123,6 +123,7 @@ data class Status(
     val home: Boolean, val exit: String, val exitWanted: String, val warnings: List<String>,
     val exitBlocked: Boolean = false,
     val killSwitch: Boolean = false,
+    val exitOnly: Boolean = false,
     val exits: List<ExitOption> = emptyList(),
     val exitChoice: String = "",
     val access: List<Pair<String, String>> = emptyList(),
@@ -148,7 +149,7 @@ fun parseStatus(json: String): Status {
         o.optBoolean("joined"), o.optBoolean("running"), o.optString("name"), o.optString("mesh_ip"),
         o.optString("home_relay"), o.optString("error"), list, admin,
         o.optBoolean("home"), o.optString("exit"), o.optString("exit_wanted"), warnings,
-        o.optBoolean("exit_blocked"), o.optBoolean("kill_switch"),
+        o.optBoolean("exit_blocked"), o.optBoolean("kill_switch"), o.optBoolean("exit_only"),
         o.optJSONArray("exits")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { ExitOption(it.optString("id"), it.optString("name"), it.optBoolean("up")) } } ?: emptyList(),
         o.optString("exit_choice"),
         o.optJSONArray("access")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) }.map { it.optString("node") to it.optString("what") } } ?: emptyList(),
@@ -320,7 +321,8 @@ fun KillSwitchCard(s: Status, activity: Activity, onChange: () -> Unit) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Kill switch", style = MaterialTheme.typography.titleMedium)
-                    Text("Internet only through an exit node: blocked when none is reachable. Turning meshgate off still gives normal internet.",
+                    Text((if (s.exitOnly) "Your admin requires exit only for this phone. " else "") +
+                        "Internet only through an exit node: blocked when none is reachable. Turning meshgate off still gives normal internet.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(12.dp))
