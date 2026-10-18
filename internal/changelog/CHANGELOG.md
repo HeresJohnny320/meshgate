@@ -3,10 +3,12 @@
 `+` added · `-` removed · `~` changed or fixed
 
 ## Unreleased
-+ Changelog in the dashboard (Changelog tab), the TUI (CHANGES tab) and the app (Updates → What's new)
 ~ Port forwards, relays and exit nodes work on Linux servers running ufw or Docker (their FORWARD policy DROP used to block them silently)
 + iptables MESHGATE chain with exact rules: each forward only on its edge node, for its own ports and protocol, removed when the forward is disabled or deleted
 + Per-server switch to keep meshgate out of iptables (Nodes → Edit)
+
+## v0.2.13 · 2026-10-17
++ Changelog in the dashboard (Changelog tab), the TUI (CHANGES tab) and the app (Updates → What's new)
 
 ## v0.2.12 · 2026-10-17
 ~ Android: the APK is signed with the permanent release key, so in-app updates install over the old app (one last reinstall needed when coming from an older APK)
