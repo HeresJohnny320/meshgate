@@ -12,6 +12,9 @@
 + History graph: hover or tap for the exact speeds, peaks and data at any time; totals, peak and average above it; buttons to show or hide in, out and peaks
 + Changing the log server moves the stored history to the new one and deletes it from the old one
 + Download traffic history as CSV, JSON or a text table: any days, month or year, 5-minute to daily detail, one series or all of them
+~ Traffic history counts exact bytes (not average speeds); downloads have bytes in, out and total per row and totals at the end
++ History logs each forward's port, protocol and target IP:port, each site's hostname with HTTPS and HTTP apart, and the node that measured it; deleted forwards stay readable
++ History graph and downloads per target IP, per public port and per node (all its links)
 
 ## v0.2.13 · 2026-10-17
 + Changelog in the dashboard (Changelog tab), the TUI (CHANGES tab) and the app (Updates → What's new)

@@ -605,29 +605,27 @@ func changeLine(l string, sel bool) string {
 	return marker + mutedStyle.Render(l)
 }
 
-// trafficLine: name, a sparkline of the period (in+out average), the total
+// trafficLine: name, a sparkline of the period (bytes in+out), the total
 // transferred and the peak speed.
 func (m *model_) trafficLine(r histRow, sel bool, width int) string {
 	marker := "  "
 	if sel {
 		marker = selectedStyle.Render("> ")
 	}
-	var buckets [][5]float64
-	var step int64
-	if m.hist != nil {
-		buckets, step = m.hist.Series[r.key], m.hist.Step
-	}
 	cols := min(48, max(8, width-62))
 	vals := make([]float64, cols)
 	var total, peak float64
-	for _, b := range buckets {
-		total += (b[1] + b[2]) * float64(step)
-		peak = math.Max(peak, math.Max(b[3], b[4]))
-	}
-	if n := len(buckets); n > 0 {
-		for i, b := range buckets {
-			c := i * cols / n
-			vals[c] = math.Max(vals[c], b[1]+b[2])
+	if h := m.hist; h != nil {
+		from, to := float64(h.From), float64(h.To)
+		for _, k := range r.keys {
+			for _, b := range h.Series[k] {
+				total += b[1] + b[2]
+				peak = math.Max(peak, math.Max(b[3], b[4]))
+				if to > from {
+					c := min(cols-1, max(0, int((b[0]-from)/(to-from)*float64(cols))))
+					vals[c] += b[1] + b[2]
+				}
+			}
 		}
 	}
 	label := r.label

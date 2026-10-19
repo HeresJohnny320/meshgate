@@ -100,6 +100,7 @@ func (a *Agent) readTraffic() {
 	hosts, _ := a.proxy.Stats()
 	for h, s := range hosts {
 		raw["r_"+h+"_req"], raw["r_"+h+"_err"], raw["r_"+h+"_in"], raw["r_"+h+"_out"] = s.Requests, s.Errors, s.In, s.Out
+		raw["r_"+h+"_hin"], raw["r_"+h+"_hout"] = s.HTTPIn, s.HTTPOut
 	}
 	a.meters.observe(raw)
 }
@@ -119,7 +120,7 @@ func (a *Agent) localTraffic() traffic.Node {
 			continue
 		}
 		h := strings.ToLower(r.Hostname)
-		rt := traffic.Route{Rate: ms.rate("r_"+h+"_in", "r_"+h+"_out")}
+		rt := traffic.Route{Rate: ms.rate("r_"+h+"_in", "r_"+h+"_out"), HTTP: ms.rate("r_"+h+"_hin", "r_"+h+"_hout")}
 		rt.Requests, rt.ReqRate = ms.get("r_" + h + "_req")
 		rt.Errors, _ = ms.get("r_" + h + "_err")
 		t.Routes[r.ID] = rt

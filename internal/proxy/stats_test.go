@@ -32,6 +32,16 @@ func TestCountedRequests(t *testing.T) {
 	if h.Requests != 2 || h.Errors != 1 || h.In != 10 || h.Out < 11 {
 		t.Fatalf("stats %+v", h)
 	}
+	if h.HTTPRequests != 0 {
+		t.Fatalf("https counted as http: %+v", h)
+	}
+	r := httptest.NewRequest("POST", "http://jelly.example.com/", strings.NewReader("123"))
+	r.TLS = nil
+	p.counted(httptest.NewRecorder(), r, l)
+	hosts, _ = p.Stats()
+	if h := hosts["jelly.example.com"]; h.HTTPRequests != 1 || h.HTTPIn != 3 || h.HTTPOut != 11 || h.Requests != 3 || h.In != 13 {
+		t.Fatalf("plain http stats %+v", h)
+	}
 	if len(recent) != 2 || recent[0].Client != "198.18.1.5" || recent[1].Status != 500 || recent[1].Path != "/boom" {
 		t.Fatalf("recent %+v", recent)
 	}

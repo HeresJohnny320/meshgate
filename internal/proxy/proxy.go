@@ -91,6 +91,11 @@ func (p *Proxy) counted(w http.ResponseWriter, r *http.Request, l *live) {
 	s.Requests++
 	s.In += in
 	s.Out += cw.n
+	if r.TLS == nil {
+		s.HTTPRequests++
+		s.HTTPIn += in
+		s.HTTPOut += cw.n
+	}
 	if cw.status >= 500 {
 		s.Errors++
 	}

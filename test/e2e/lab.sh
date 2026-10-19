@@ -385,7 +385,8 @@ H=$(api home "history?range=6h")
 echo "$H" | python3 -c "import json,sys; h=json.load(sys.stdin); print('history from', h['server'], 'series:', sorted(h['series']))"
 check "history: home reads it from the log server vps" "echo '$H' | grep -q '\"server\":\"vps\"'"
 check "history: the masq forward's traffic was recorded" "echo '$H' | python3 -c \"import json,sys; h=json.load(sys.stdin); assert any(b[3] > 0 for b in h['series']['f:$MASQ_ID'])\""
-check "history: vps keeps it in its day file" "ls '$D/vps/history/' | grep -q '\.bin'"
+check "history: counted in exact bytes, with its port and target" "echo '$H' | python3 -c \"import json,sys; h=json.load(sys.stdin); assert h['units']=='bytes'; assert sum(b[1]+b[2] for b in h['series']['f:$MASQ_ID']) > 0; l=h['labels']['f:$MASQ_ID']; assert l['kind']=='forward' and l['port'] and l['target_ip'], l\""
+check "history: vps keeps it in its day file" "ls '$D/vps/history/' | grep -q '\.dat' && ls '$D/vps/history/' | grep -q labels.json"
 
 echo; echo "== traffic history: switching the log server to home moves vps's files there"
 HOME_ID=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([n["value"]["id"] for n in v["nodes"] if n["value"]["name"]=="home"][0])')
@@ -393,7 +394,7 @@ api vps history-settings "{\"log_server\":\"$HOME_ID\",\"log_days\":365}" >/dev/
 for i in $(seq 1 30); do [ -z "$(ls "$D/vps/history/" 2>/dev/null)" ] && break; sleep 2; done
 H=$(api vps "history?range=6h")
 check "history move: vps no longer keeps files" "[ -z \"\$(ls '$D/vps/history/')\" ]"
-check "history move: home has them" "ls '$D/home/history/' | grep -q '\.bin'"
+check "history move: home has them" "ls '$D/home/history/' | grep -q '\.dat'"
 check "history move: vps reads it from home, old traffic included" "echo '$H' | python3 -c \"import json,sys; h=json.load(sys.stdin); assert h['server']=='home'; assert any(b[3] > 0 for b in h['series']['f:$MASQ_ID'])\""
 NOW=$(date +%s)
 H=$(api home "history?from=$((NOW-7200))&to=$((NOW+300))&step=300")

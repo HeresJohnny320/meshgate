@@ -15,6 +15,7 @@ type Rate struct {
 // Route is an HTTPS route's traffic.
 type Route struct {
 	Rate
+	HTTP     Rate    `json:"http"` // the part over plain HTTP (the rest is HTTPS)
 	Requests uint64  `json:"requests"`
 	Errors   uint64  `json:"errors"`
 	ReqRate  float64 `json:"req_rate"` // requests per second
@@ -26,6 +27,10 @@ type HostStats struct {
 	Errors   uint64 `json:"errors"` // 5xx answers (incl. backend unreachable)
 	In       uint64 `json:"in"`     // request body bytes
 	Out      uint64 `json:"out"`    // response body bytes
+	// The part of the above served over plain HTTP (the rest was HTTPS).
+	HTTPRequests uint64 `json:"http_requests,omitempty"`
+	HTTPIn       uint64 `json:"http_in,omitempty"`
+	HTTPOut      uint64 `json:"http_out,omitempty"`
 }
 
 // Request is one entry of the recent HTTPS requests list.

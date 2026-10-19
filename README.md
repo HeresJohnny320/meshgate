@@ -410,19 +410,34 @@ on pfSense use *Status → Traffic Graph* and the MESHGATE rules tab for its sid
 
 ### Traffic history (graphs over time)
 
-Every server averages its traffic in memory and every 5 minutes hands one
-point per series (average and peak speed, in and out) to the mesh's **log
-server**, which keeps one file per day under `/var/lib/meshgate/history`
-(past days gzip-compressed). Kept 365 days by default: about 10-30 MB a year
-for a home mesh.
+Every server counts the exact bytes of everything it handles and every 5
+minutes hands one point per series (bytes in, bytes out and the peak speed) to
+the mesh's **log server**, which keeps one file per day under
+`/var/lib/meshgate/history` (past days gzip-compressed) plus `labels.json`.
+Kept 365 days by default: about 10-40 MB a year for a home mesh.
+
+What gets logged, each on its own:
+
+- every **port forward**: its public port(s), protocol, target IP and port,
+  and which node it runs on;
+- every site, with **HTTPS and HTTP counted separately**: hostname, target IP
+  and port;
+- every **device link** (WireGuard traffic between a server and each device or
+  node).
+
+Totals are never stored, they are added up when shown: the graph and the
+downloads can show any target IP, any public port, any node (all its links)
+or everything together. The labels are kept with the history, so a forward
+you deleted still shows up (marked *deleted*) with its port and target.
 
 - **Pick the log server:** web UI → **Settings → Traffic history**: choose the
   server (e.g. your VPS) and how many days to keep. Left on *automatic*, it's
   the first relay. Other servers send their points to it over the mesh and
   keep them in memory while it's unreachable (about a day's worth).
 - **View it:** web UI or app → **Traffic → History**: 6 hours, day, week,
-  month or year, for everything together, one target IP, one forward, one
-  HTTPS route or one device link. In the TUI: `8`, `v` for the period.
+  month or year, for everything together, per target IP, per public port,
+  per node, one forward, one site (HTTPS or HTTP) or one device link. In the
+  TUI: `8`, `v` for the period.
 
 Changing the log server moves the history: within 5 minutes the old log
 server sends its day files to the new one (merged with anything already
@@ -438,10 +453,15 @@ buttons hide or show each line; the period and choice are remembered.
 Yesterday, Last 7 days, This month, Last month, This year, … or any From/To
 days), the detail (5 minutes, 15 minutes, 1 hour or 1 day), the format (CSV for
 Excel or Sheets, JSON, or a readable text table) and either what the graph
-shows or every series separately. Each row has the time, average and peak
-speed in and out (bits per second) and the data moved (bytes). One download
-holds up to 9000 rows per series (a month at 5 minutes, a year at 1 hour). In
-the app it opens Android's *Save as*.
+shows or every series separately. Each row has the time, what the series is
+(kind, name, hostname, protocol, port, target IP and port, target node, the
+node that measured it), the exact **bytes** in, out and total, and the peak
+speed in bytes per second. Totals per series come at the end (CSV: `TOTAL`
+rows; JSON: `total`; text: a `TOTAL` line), plus overall totals when several
+series are in the file: forwards and sites apart from device links, since a
+forward's traffic also crosses a link. One download holds up to 9000 rows per
+series (a month at 5 minutes, a year at 1 hour). In the app it opens Android's
+*Save as*.
 
 ### Testing that everything works
 

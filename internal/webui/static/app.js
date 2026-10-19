@@ -158,26 +158,76 @@ async function loadHistory() {
   } finally {
     chart.classList.remove("loading");
   }
-  // Choices: everything, per target IP (forwards + sites to it), per forward,
-  // per site, per device link.
-  const node = (id) => view.nodes.find((n) => n.value.id === id)?.value;
-  const target = (x) => x.target_ip || node(x.target_node)?.mesh_ip || "?";
-  const opts = [["all", "Everything (all forwards and sites)"]];
-  const ips = {};
-  (view.forwards || []).forEach(({ value: f }) => (ips[target(f)] ||= []).push("f:" + f.id));
-  (view.routes || []).forEach(({ value: r }) => (ips[target(r)] ||= []).push("r:" + r.id));
-  Object.keys(ips).sort().forEach((ip) => opts.push(["ip:" + ip, "Target IP " + ip]));
-  (view.forwards || []).forEach(({ value: f }) => opts.push(["f:" + f.id, `Forward ${f.name} (${f.proto} ${f.listen_port})`]));
-  (view.routes || []).forEach(({ value: r }) => opts.push(["r:" + r.id, "Site " + r.hostname]));
-  Object.keys(hist.series || {}).filter((k) => k.startsWith("d:")).sort().forEach((k) => {
-    const [peer, by] = k.slice(2).split("@");
-    opts.push([k, `Device ${nodeName(peer)} ↔ ${nodeName(by)}`]);
-  });
+  const groups = histGroups(hist);
   const sel = $("#hist-series"), keep = sel.value || histPref.series;
-  sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
-  if (opts.some(([v]) => v === keep)) sel.value = keep;
-  hist.ipKeys = ips;
+  let html = "", section = "";
+  for (const g of groups) {
+    if (g.section !== section) {
+      if (section) html += "</optgroup>";
+      if (g.section) html += `<optgroup label="${esc(g.section)}">`;
+      section = g.section;
+    }
+    html += `<option value="${esc(g.value)}">${esc(g.label)}</option>`;
+  }
+  sel.innerHTML = html + (section ? "</optgroup>" : "");
+  if (groups.some((g) => g.value === keep)) sel.value = keep;
+  hist.groups = Object.fromEntries(groups.map((g) => [g.value, g]));
   drawHistory();
+}
+
+// histLabels: what each series is (forward, https/http site, device link),
+// from the log server (which also knows deleted ones) and the current config.
+function histLabels(h) {
+  const node = (id) => view.nodes.find((n) => n.value.id === id)?.value;
+  const target = (x) => x.target_ip || node(x.target_node)?.mesh_ip || "";
+  const L = { ...(h.labels || {}) };
+  for (const { value: f } of view.forwards || []) {
+    L["f:" + f.id] = { ...L["f:" + f.id], kind: "forward", name: f.name, proto: f.proto,
+      port: f.listen_end > f.listen_port ? `${f.listen_port}-${f.listen_end}` : String(f.listen_port),
+      target_ip: target(f), target_port: String(f.target_port), target_node: nodeName(f.target_node), node: nodeName(f.edge_node) };
+  }
+  for (const { value: r } of view.routes || []) {
+    for (const [p, kind, port] of [["r:", "https", "443"], ["h:", "http", "80"]]) {
+      L[p + r.id] = { ...L[p + r.id], kind, hostname: r.hostname, port, target_ip: target(r),
+        target_port: String(r.target_port), target_node: nodeName(r.target_node), node: nodeName(r.edge_node) };
+    }
+  }
+  for (const k of Object.keys(h.series || {})) {
+    if (k.startsWith("d:") && !L[k]) { const [peer, by] = k.slice(2).split("@"); L[k] = { kind: "link", peer: nodeName(peer), node: nodeName(by) }; }
+  }
+  return L;
+}
+
+// seriesName: one line describing a series.
+function seriesName(k, l = {}) {
+  const tgt = l.target_ip ? ` → ${l.target_ip}${l.target_port ? ":" + l.target_port : ""}` : "";
+  if (k.startsWith("f:")) return `${l.name || "forward"} (${l.proto || "?"} ${l.port || "?"}${tgt})`;
+  if (k.startsWith("r:") || k.startsWith("h:")) return `${k[0] === "r" ? "https" : "http"}://${l.hostname || "?"}${tgt}`;
+  if (k.startsWith("d:")) return `${l.peer || "?"} ↔ ${l.node || "?"}`;
+  return k;
+}
+
+// histGroups: every choice of "Show", each the series it adds up.
+function histGroups(h) {
+  const L = histLabels(h), live = new Set(Object.keys(L));
+  const keys = [...new Set([...Object.keys(h.series || {}), ...[...live].filter((k) => !k.startsWith("d:"))])].sort();
+  const current = new Set([...(view.forwards || []).map((x) => "f:" + x.value.id),
+    ...(view.routes || []).flatMap((x) => ["r:" + x.value.id, "h:" + x.value.id])]);
+  const gone = (k) => (current.has(k) || k.startsWith("d:") ? "" : " (deleted)");
+  const out = [{ value: "all", label: "Everything (all forwards and sites)", keys: keys.filter((k) => !k.startsWith("d:")), section: "" }];
+  const add = (section, value, label, ks) => out.push({ section, value, label, keys: ks });
+  const by = (f) => { const m = {}; for (const k of keys) { const v = f(k); if (v) (m[v] ||= []).push(k); } return m; };
+  const ips = by((k) => !k.startsWith("d:") && L[k]?.target_ip);
+  for (const ip of Object.keys(ips).sort()) add("Per target IP", "ip:" + ip, ip, ips[ip]);
+  const ports = by((k) => (k.startsWith("f:") || k.startsWith("r:") || k.startsWith("h:")) && L[k]?.port && `${L[k].port}`);
+  for (const p of Object.keys(ports).sort((a, b) => parseInt(a, 10) - parseInt(b, 10))) add("Per public port", "port:" + p, "Port " + p, ports[p]);
+  const nodes = by((k) => k.startsWith("d:") && L[k]?.node);
+  for (const n of Object.keys(nodes).sort()) add("Per node (all its WireGuard links)", "node:" + n, n, nodes[n]);
+  for (const k of keys.filter((k) => k.startsWith("f:"))) add("Port forwards", k, seriesName(k, L[k]) + gone(k), [k]);
+  for (const k of keys.filter((k) => k.startsWith("r:") || k.startsWith("h:"))) add("Sites (HTTPS and HTTP)", k, seriesName(k, L[k]) + gone(k), [k]);
+  for (const k of keys.filter((k) => k.startsWith("d:"))) add("Device links", k, seriesName(k, L[k]), [k]);
+  out.labels = L;
+  return out;
 }
 
 // niceStep: 1, 2 or 5 times a power of ten, so the axis reads 0 / 5 / 10 / 15 Mbps.
@@ -189,19 +239,21 @@ const niceStep = (max, n) => {
 function drawHistory() {
   const chart = $("#hist-chart");
   if (!hist || chart.offsetParent === null) return;
-  const choice = $("#hist-series").value;
-  const keys = choice === "all" ? Object.keys(hist.series || {}).filter((k) => !k.startsWith("d:"))
-    : choice.startsWith("ip:") ? (hist.ipKeys[choice.slice(3)] || []) : [choice];
-  // Sum the chosen series per time step: [start, avg in, avg out, peak in, peak out].
+  const keys = hist.groups?.[$("#hist-series").value]?.keys || [];
+  // Per time step: [start, avg in, avg out, peak in, peak out, bytes in, bytes out]
+  // (stored as bytes; speeds are bytes per step / step).
   const n = Math.round((hist.to - hist.from) / hist.step);
-  const pts = Array.from({ length: n }, (_, i) => [hist.from + i * hist.step, 0, 0, 0, 0]);
+  const pts = Array.from({ length: n }, (_, i) => [hist.from + i * hist.step, 0, 0, 0, 0, 0, 0]);
   let any = false;
   for (const k of keys) {
     for (const b of (hist.series || {})[k] || []) {
       const i = Math.round((b[0] - hist.from) / hist.step);
-      if (i >= 0 && i < n) { for (let j = 1; j < 5; j++) pts[i][j] += b[j]; any = true; }
+      if (i < 0 || i >= n) continue;
+      pts[i][5] += b[1]; pts[i][6] += b[2]; pts[i][3] += b[3]; pts[i][4] += b[4];
+      any = true;
     }
   }
+  for (const p of pts) { p[1] = p[5] / hist.step; p[2] = p[6] / hist.step; }
   histPts = pts;
 
   const W = Math.max(280, chart.clientWidth), H = W < 500 ? 200 : 260;
@@ -266,7 +318,7 @@ function drawHistory() {
   drawHistory.geo = { x, y, W, L, R };
   if (histHover >= 0 && histHover < n) showHistTip(histHover);
 
-  const sum = (j) => pts.reduce((s, p) => s + p[j] * hist.step, 0);
+  const sum = (j) => pts.reduce((s, p) => s + p[j + 4], 0);
   const peak = Math.max(0, ...pts.map((p) => Math.max(p[3], p[4])));
   const peakAt = pts.find((p) => Math.max(p[3], p[4]) === peak);
   const tile = (v, l) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
@@ -279,14 +331,6 @@ function drawHistory() {
 
 // ---------- traffic history download ----------
 
-const histName = (k) => {
-  if (k.startsWith("ip:")) return "Target IP " + k.slice(3);
-  const id = k.slice(2);
-  if (k.startsWith("f:")) return "Forward " + ((view.forwards || []).find((x) => x.value.id === id)?.value.name || id);
-  if (k.startsWith("r:")) return "Site " + ((view.routes || []).find((x) => x.value.id === id)?.value.hostname || id);
-  if (k.startsWith("d:")) { const [peer, by] = id.split("@"); return `Device ${nodeName(peer)} - ${nodeName(by)}`; }
-  return k === "all" ? "Everything" : k;
-};
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const localTime = (t) => { const d = new Date(t * 1000); return `${ymd(d)} ${d.toTimeString().slice(0, 5)}`; };
 const exportSteps = [[300, "5 minutes"], [900, "15 minutes"], [3600, "1 hour"], [86400, "1 day"]];
@@ -316,7 +360,7 @@ function downloadDialog() {
     const h = await api(`/api/history?from=${Math.floor(from)}&to=${Math.floor(to)}&step=${step}`);
     const fmt = fd.get("format"), each = fd.get("what") === "each";
     const text = histExport(h, each ? null : sel.value, fmt);
-    const what = each ? "all" : sel.value.replace(/^(f|r|d):/, "").replace(/[^a-zA-Z0-9.@-]+/g, "_");
+    const what = each ? "every-series" : (sel.selectedOptions[0]?.textContent || "traffic").replace(/[^a-zA-Z0-9.@-]+/g, "_").slice(0, 60);
     saveFile(`meshgate-traffic-${what}-${fd.get("from")}_${fd.get("to")}.${fmt}`,
       { csv: "text/csv", json: "application/json", txt: "text/plain" }[fmt], text);
   }, { ok: "Download", done: "", reload: false });
@@ -328,7 +372,7 @@ function downloadDialog() {
     [...f.step.options].forEach((o) => { o.disabled = !ok(+o.value); });
     if (f.step.selectedOptions[0]?.disabled) f.step.value = exportSteps.find(([s]) => ok(s))?.[0] ?? 86400;
     $("#dl-hint").textContent = days > 0
-      ? `${days} day${days > 1 ? "s" : ""} · ${Math.ceil((days * 86400) / f.step.value).toLocaleString()} rows per series. Speeds in bits per second, amounts in bytes, times in this device's time zone.`
+      ? `${days} day${days > 1 ? "s" : ""} · ${Math.ceil((days * 86400) / f.step.value).toLocaleString()} rows per series. Exact bytes in and out per row, totals at the end, peaks in bytes per second, times in this device's time zone.`
       : "The end day must be on or after the start day.";
   };
   f.from.onchange = f.to.onchange = f.step.onchange = fit;
@@ -350,47 +394,74 @@ function downloadDialog() {
 }
 
 // histExport turns a history answer into the chosen file: one row per series
-// and time step (steps without traffic included as zeros).
+// and time step (steps without traffic included as zeros), amounts in exact
+// bytes, and totals per series and overall.
 function histExport(h, choice, fmt) {
-  const all = Object.keys(h.series || {}).sort();
-  let groups; // [name, keys]
-  if (choice === null) groups = all.map((k) => [histName(k), [k]]);
-  else if (choice === "all") groups = [["Everything", all.filter((k) => !k.startsWith("d:"))]];
-  else if (choice.startsWith("ip:")) groups = [[histName(choice), hist?.ipKeys?.[choice.slice(3)] || []]];
-  else groups = [[histName(choice), [choice]]];
-  const n = Math.round((h.to - h.from) / h.step), rows = [];
-  for (const [name, keys] of groups) {
+  const groups = histGroups(h), L = groups.labels;
+  let series; // [{name, keys, label}]
+  if (choice === null) {
+    series = Object.keys(h.series || {}).sort().map((k) => ({ key: k, name: seriesName(k, L[k]), keys: [k], label: L[k] || {} }));
+  } else {
+    const g = groups.find((x) => x.value === choice) || groups[0];
+    series = [{ key: g.value, name: g.label, keys: g.keys, label: g.keys.length === 1 ? L[g.keys[0]] || {} : {} }];
+  }
+  const n = Math.round((h.to - h.from) / h.step);
+  const labelCols = ["kind", "name", "hostname", "proto", "port", "target_ip", "target_port", "target_node", "node", "peer"];
+  for (const sr of series) {
     const pts = Array.from({ length: n }, (_, i) => [h.from + i * h.step, 0, 0, 0, 0]);
-    for (const k of keys) for (const b of h.series[k] || []) {
+    for (const k of sr.keys) for (const b of h.series[k] || []) {
       const i = Math.round((b[0] - h.from) / h.step);
       if (i >= 0 && i < n) for (let j = 1; j < 5; j++) pts[i][j] += b[j];
     }
-    for (const p of pts) rows.push({
-      time: localTime(p[0]), unix: p[0], series: name,
-      avg_in_bps: Math.round(p[1] * 8), avg_out_bps: Math.round(p[2] * 8),
-      peak_in_bps: Math.round(p[3] * 8), peak_out_bps: Math.round(p[4] * 8),
-      bytes_in: Math.round(p[1] * h.step), bytes_out: Math.round(p[2] * h.step),
-    });
+    sr.rows = pts.map((p) => ({ time: localTime(p[0]), unix: p[0], bytes_in: Math.round(p[1]), bytes_out: Math.round(p[2]),
+      bytes_total: Math.round(p[1] + p[2]), peak_in_bytes_per_sec: Math.round(p[3]), peak_out_bytes_per_sec: Math.round(p[4]) }));
+    sr.total = sr.rows.reduce((t, r) => ({ bytes_in: t.bytes_in + r.bytes_in, bytes_out: t.bytes_out + r.bytes_out,
+      bytes_total: t.bytes_total + r.bytes_total, peak_in_bytes_per_sec: Math.max(t.peak_in_bytes_per_sec, r.peak_in_bytes_per_sec),
+      peak_out_bytes_per_sec: Math.max(t.peak_out_bytes_per_sec, r.peak_out_bytes_per_sec) }),
+    { bytes_in: 0, bytes_out: 0, bytes_total: 0, peak_in_bytes_per_sec: 0, peak_out_bytes_per_sec: 0 });
   }
-  const cols = ["time", "unix", "series", "avg_in_bps", "avg_out_bps", "peak_in_bps", "peak_out_bps", "bytes_in", "bytes_out"];
-  if (fmt === "json") return JSON.stringify({ from: h.from, to: h.to, step_seconds: h.step, server: h.server, rows }, null, 1);
+  // Totals over several series: forwards and sites apart from device links,
+  // since a forward's traffic also crosses a link (adding them would count it twice).
+  const sums = {};
+  for (const sr of series) {
+    const g = sr.key.startsWith("d:") || sr.key.startsWith("node:") ? "All device links" : "All forwards and sites";
+    const t = (sums[g] ||= { bytes_in: 0, bytes_out: 0, bytes_total: 0 });
+    for (const k in t) t[k] += sr.total[k];
+  }
+  const grand = series.length > 1 ? sums : {};
+  const period = `${localTime(h.from)} to ${localTime(h.to)}`;
+  const every = exportSteps.find(([s]) => s === h.step)?.[1] || h.step + " seconds";
+
+  if (fmt === "json") {
+    return JSON.stringify({ from: h.from, to: h.to, period, step_seconds: h.step, stored_on: h.server, units: "bytes",
+      totals: grand, series: series.map((sr) => ({ series: sr.name, key: sr.key, ...sr.label, total: sr.total, rows: sr.rows })) }, null, 2);
+  }
+  const amounts = ["bytes_in", "bytes_out", "bytes_total", "peak_in_bytes_per_sec", "peak_out_bytes_per_sec"];
   if (fmt === "csv") {
-    const q = (v) => (typeof v === "string" && /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-    return [cols.join(","), ...rows.map((r) => cols.map((c) => q(r[c])).join(","))].join("\r\n") + "\r\n";
+    const cols = ["time", "unix", "series", ...labelCols, ...amounts];
+    const q = (v) => (v === undefined ? "" : typeof v === "string" && /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const line = (r) => cols.map((c) => q(r[c])).join(",");
+    const lines = [cols.join(",")];
+    for (const sr of series) for (const r of sr.rows) lines.push(line({ ...sr.label, ...r, series: sr.name }));
+    for (const sr of series) lines.push(line({ ...sr.label, ...sr.total, time: "TOTAL", series: sr.name }));
+    for (const [g, t] of Object.entries(grand)) lines.push(line({ ...t, time: "TOTAL", series: g }));
+    return lines.join("\r\n") + "\r\n";
   }
-  // Text: a readable table per series with human units.
-  const out = [`meshgate traffic history · ${localTime(h.from)} to ${localTime(h.to)} · one row per ${exportSteps.find(([s]) => s === h.step)?.[1] || h.step + " s"} · stored on ${h.server}`, ""];
-  const head = ["Time", "Avg in", "Avg out", "Peak in", "Peak out", "Data in", "Data out"];
-  for (const [name] of groups) {
-    const rs = rows.filter((r) => r.series === name);
-    const tIn = rs.reduce((s, r) => s + r.bytes_in, 0), tOut = rs.reduce((s, r) => s + r.bytes_out, 0);
-    const table = [head, ...rs.map((r) => [r.time, bps(r.avg_in_bps / 8), bps(r.avg_out_bps / 8), bps(r.peak_in_bps / 8),
-      bps(r.peak_out_bps / 8), bytes(r.bytes_in), bytes(r.bytes_out)])];
+  // Text: a table per series, exact bytes plus a readable total.
+  const out = [`meshgate traffic history · ${period} · one row per ${every} · stored on ${h.server}`,
+    "Amounts in bytes; peaks in bytes per second.", ""];
+  const head = ["Time", "Bytes in", "Bytes out", "Bytes total", "Peak in B/s", "Peak out B/s"];
+  const num = (v) => v.toLocaleString("en-US");
+  for (const sr of series) {
+    const l = sr.label, info = [l.node && "measured on " + l.node, l.target_node && "target node " + l.target_node].filter(Boolean).join(", ");
+    const table = [head, ...sr.rows.map((r) => [r.time, ...amounts.map((c) => num(r[c]))]), ["TOTAL", ...amounts.map((c) => num(sr.total[c]))]];
     const w = head.map((_, i) => Math.max(...table.map((r) => String(r[i]).length)));
-    out.push(`== ${name} · total ${bytes(tIn)} in, ${bytes(tOut)} out`);
+    out.push(`== ${sr.name}${info ? " (" + info + ")" : ""}`);
+    out.push(`   total ${num(sr.total.bytes_total)} bytes (${bytes(sr.total.bytes_total)}): ${num(sr.total.bytes_in)} in, ${num(sr.total.bytes_out)} out`);
     for (const r of table) out.push(r.map((v, i) => (i ? String(v).padStart(w[i]) : String(v).padEnd(w[i]))).join("  "));
     out.push("");
   }
+  for (const [g, t] of Object.entries(grand)) out.push(`== ${g}: ${num(t.bytes_total)} bytes (${bytes(t.bytes_total)}): ${num(t.bytes_in)} in, ${num(t.bytes_out)} out`);
   return out.join("\n");
 }
 
@@ -439,7 +510,7 @@ function showHistTip(i) {
     el("i", "", undefined, r).style.color = color;
     el("span", "", name, r);
     el("b", "", bps(p[j]), r);
-    el("div", "sub", `peak ${bps(p[j + 2])} · ${bytes(p[j] * hist.step)}`);
+    el("div", "sub", `peak ${bps(p[j + 2])} · ${bytes(p[j + 4])}`);
   }
   tip.hidden = false;
   const left = x(i) + 14, wTip = tip.offsetWidth;

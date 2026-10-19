@@ -39,14 +39,75 @@ const maxPending = 50000
 func (a *Agent) sampleHistory() {
 	t := a.localTraffic()
 	for id, r := range t.Forwards {
-		a.hist.acc.Sample("f:"+id, r.InRate, r.OutRate)
+		a.hist.acc.Sample("f:"+id, r.In, r.Out, r.InRate, r.OutRate)
 	}
 	for id, r := range t.Routes {
-		a.hist.acc.Sample("r:"+id, r.InRate, r.OutRate)
+		// HTTPS and plain HTTP separately (the counters hold both together).
+		a.hist.acc.Sample("r:"+id, r.In-min(r.In, r.HTTP.In), r.Out-min(r.Out, r.HTTP.Out),
+			max(0, r.InRate-r.HTTP.InRate), max(0, r.OutRate-r.HTTP.OutRate))
+		a.hist.acc.Sample("h:"+id, r.HTTP.In, r.HTTP.Out, r.HTTP.InRate, r.HTTP.OutRate)
 	}
 	for id, r := range t.Peers {
-		a.hist.acc.Sample("d:"+id+"@"+a.Cfg.NodeID, r.InRate, r.OutRate)
+		a.hist.acc.Sample("d:"+id+"@"+a.Cfg.NodeID, r.In, r.Out, r.InRate, r.OutRate)
 	}
+}
+
+// historyLabels describes the series this server measures, so the log
+// server can show (and keep) the port, target IP, hostname and nodes of each.
+func (a *Agent) historyLabels() map[string]history.Label {
+	nodes := map[string]model.Node{}
+	for _, n := range store.List[model.Node](a.Store, model.KindNode) {
+		nodes[n.ID] = n
+	}
+	name := func(id string) string {
+		if n, ok := nodes[id]; ok && n.Name != "" {
+			return n.Name
+		}
+		return id
+	}
+	target := func(ip, node string) string {
+		if ip != "" {
+			return ip
+		}
+		return nodes[node].MeshIP
+	}
+	self := a.Cfg.NodeID
+	l := map[string]history.Label{}
+	for _, f := range store.List[model.Forward](a.Store, model.KindForward) {
+		if f.EdgeNode != self {
+			continue
+		}
+		port := strconv.Itoa(f.ListenPort)
+		if lo, hi := f.Ports(); hi > lo {
+			port = fmt.Sprintf("%d-%d", lo, hi)
+		}
+		l["f:"+f.ID] = history.Label{"kind": "forward", "name": f.Name, "proto": string(f.Proto), "port": port,
+			"target_ip": target(f.TargetIP, f.TargetNode), "target_port": strconv.Itoa(f.TargetPort),
+			"target_node": name(f.TargetNode), "node": name(self)}
+	}
+	for _, r := range store.List[model.HTTPRoute](a.Store, model.KindRoute) {
+		if r.EdgeNode != self {
+			continue
+		}
+		for _, k := range [][3]string{{"r:", "https", "443"}, {"h:", "http", "80"}} {
+			l[k[0]+r.ID] = history.Label{"kind": k[1], "hostname": strings.ToLower(r.Hostname), "port": k[2],
+				"target_ip": target(r.TargetIP, r.TargetNode), "target_port": strconv.Itoa(r.TargetPort),
+				"target_node": name(r.TargetNode), "node": name(self)}
+		}
+	}
+	for id, n := range nodes {
+		if id != self {
+			l["d:"+id+"@"+self] = history.Label{"kind": "link", "node": name(self), "peer": name(id), "peer_ip": n.MeshIP}
+		}
+	}
+	return l
+}
+
+// histPost is what servers send the log server every 5 minutes (v0.2.17
+// servers sent only the points, as a JSON array).
+type histPost struct {
+	Points []history.Point          `json:"points"`
+	Labels map[string]history.Label `json:"labels,omitempty"`
 }
 
 // flushHistory closes the interval that started at start and delivers all
@@ -63,13 +124,16 @@ func (a *Agent) flushHistory(start time.Time) {
 
 	netw, _ := store.Get[model.Network](a.Store, model.Key(model.KindNetwork, "main"))
 	srv := a.logServer(netw)
+	labels := a.historyLabels()
 	var err error
 	switch {
 	case len(send) == 0:
 	case srv.ID == a.Cfg.NodeID:
-		err = a.localHistory().Append(send)
+		if err = a.localHistory().Append(send); err == nil {
+			err = a.localHistory().SetLabels(labels, true)
+		}
 	default:
-		err = postJSON(a.meshURL(srv, "/v1/history"), send)
+		err = postJSON(a.meshURL(srv, "/v1/history"), histPost{Points: send, Labels: labels})
 	}
 	if err != nil {
 		log.Printf("traffic history: %d points kept for later: %v", len(send), err)
@@ -227,19 +291,50 @@ func (a *Agent) History(q url.Values) (any, error) {
 			msg, _ := io.ReadAll(io.LimitReader(res.Body, 300))
 			return nil, fmt.Errorf("log server %s: %s %s", srv.Name, res.Status, strings.TrimSpace(string(msg)))
 		}
-		var out map[string]any
-		return out, json.NewDecoder(res.Body).Decode(&out)
+		var out histAnswer
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			return nil, err
+		}
+		if out.Units != "bytes" { // a v0.2.17 log server answers average speeds
+			for _, bs := range out.Series {
+				for i := range bs {
+					bs[i][1] *= float64(out.Step)
+					bs[i][2] *= float64(out.Step)
+				}
+			}
+			out.Units = "bytes"
+		}
+		return out, nil
 	}
 	return a.queryHistory(hq, srv.Name)
 }
 
-func (a *Agent) queryHistory(hq histQuery, server string) (map[string]any, error) {
+// histAnswer is a history query's answer. Buckets are [start, bytes in,
+// bytes out, peak in, peak out] (peaks in bytes per second).
+type histAnswer struct {
+	Range  string                      `json:"range"`
+	From   int64                       `json:"from"`
+	To     int64                       `json:"to"`
+	Step   int64                       `json:"step"`
+	Server string                      `json:"server"`
+	Units  string                      `json:"units"`
+	Series map[string][]history.Bucket `json:"series"`
+	Labels map[string]history.Label    `json:"labels"`
+}
+
+func (a *Agent) queryHistory(hq histQuery, server string) (histAnswer, error) {
 	series, err := a.localHistory().Query(hq.from, hq.to, hq.step)
 	if err != nil {
-		return nil, err
+		return histAnswer{}, err
 	}
-	return map[string]any{"range": hq.rng, "from": hq.from, "to": hq.to, "step": hq.step,
-		"server": server, "series": series}, nil
+	labels := a.localHistory().Labels()
+	for k := range labels {
+		if series[k] == nil {
+			delete(labels, k)
+		}
+	}
+	return histAnswer{Range: hq.rng, From: hq.from, To: hq.to, Step: hq.step, Server: server, Units: "bytes",
+		Series: series, Labels: labels}, nil
 }
 
 // serveHistory is the log server's side: servers post points, any server
@@ -250,21 +345,34 @@ func (a *Agent) serveHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		var pts []history.Point
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&pts); err != nil {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+		var post histPost
+		if t := bytes.TrimSpace(body); err == nil && len(t) > 0 && t[0] == '[' {
+			err = json.Unmarshal(t, &post.Points)
+		} else if err == nil {
+			err = json.Unmarshal(body, &post)
+		}
+		if err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		// Each server reports its own measurements only.
-		for i := range pts {
-			if len(pts[i].Key) > 2 && pts[i].Key[0] == 'd' && !hasSuffix(pts[i].Key, "@"+caller.ID) {
-				pts[i].Key = ""
+		// Each server reports its own device links only.
+		own := func(k string) bool { return !strings.HasPrefix(k, "d:") || hasSuffix(k, "@"+caller.ID) }
+		for i := range post.Points {
+			if !own(post.Points[i].Key) {
+				post.Points[i].Key = ""
 			}
 		}
-		if err := a.localHistory().Append(pts); err != nil {
+		for k := range post.Labels {
+			if !own(k) {
+				delete(post.Labels, k)
+			}
+		}
+		if err := a.localHistory().Append(post.Points); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		a.localHistory().SetLabels(post.Labels, true)
 		return
 	}
 	hq, err := parseHistQuery(r.URL.Query())

@@ -45,10 +45,14 @@ const (
 )
 
 // histResp is the log server's answer for one range (ops "history").
+// Buckets are [start, bytes in, bytes out, peak in, peak out].
 type histResp struct {
-	Step   int64                   `json:"step"`
-	Server string                  `json:"server"`
-	Series map[string][][5]float64 `json:"series"`
+	From   int64                        `json:"from"`
+	To     int64                        `json:"to"`
+	Step   int64                        `json:"step"`
+	Server string                       `json:"server"`
+	Series map[string][][5]float64      `json:"series"`
+	Labels map[string]map[string]string `json:"labels"`
 }
 
 var histRanges = []string{"6h", "1d", "1w", "1m", "1y"}
@@ -777,31 +781,90 @@ func (m *model_) exitNames(ids []string) string {
 	return strings.Join(s, ", ")
 }
 
-type histRow struct{ label, key string }
+type histRow struct {
+	label string
+	keys  []string // series added up
+}
 
-// histRows lists what the TRAFFIC tab shows: every forward and HTTPS site,
-// then the device links the log server has data for.
+// histRows lists what the TRAFFIC tab shows: every forward, HTTPS and HTTP
+// site (also deleted ones the log server still has), then per target IP, per
+// node and per device link.
 func (m *model_) histRows() []histRow {
+	var labels map[string]map[string]string
+	series := map[string]bool{}
+	if m.hist != nil {
+		labels = m.hist.Labels
+		for k := range m.hist.Series {
+			series[k] = true
+		}
+	}
 	var rows []histRow
+	seen := map[string]bool{}
+	add := func(label string, keys ...string) {
+		rows = append(rows, histRow{label, keys})
+		for _, k := range keys {
+			seen[k] = true
+		}
+	}
 	for _, it := range m.v.Forwards {
 		f := it.Value
-		rows = append(rows, histRow{fmt.Sprintf("%s (%s %d)", labelOr(f.Name), f.Proto, f.ListenPort), "f:" + f.ID})
+		add(fmt.Sprintf("%s (%s %d)", labelOr(f.Name), f.Proto, f.ListenPort), "f:"+f.ID)
 	}
 	for _, it := range m.v.Routes {
-		rows = append(rows, histRow{it.Value.Hostname, "r:" + it.Value.ID})
+		add("https://"+it.Value.Hostname, "r:"+it.Value.ID)
+		add("http://"+it.Value.Hostname, "h:"+it.Value.ID)
 	}
-	if m.hist != nil {
-		var keys []string
-		for k := range m.hist.Series {
-			if strings.HasPrefix(k, "d:") {
-				keys = append(keys, k)
-			}
+	var keys []string
+	for k := range series {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys { // deleted forwards and sites
+		l := labels[k]
+		switch {
+		case seen[k] || strings.HasPrefix(k, "d:"):
+		case strings.HasPrefix(k, "f:"):
+			add(fmt.Sprintf("%s (%s %s, deleted)", labelOr(l["name"]), l["proto"], l["port"]), k)
+		case l["hostname"] != "":
+			add(l["kind"]+"://"+l["hostname"]+" (deleted)", k)
 		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			peer, by, _ := strings.Cut(k[2:], "@")
-			rows = append(rows, histRow{m.name(peer) + " <-> " + m.name(by), k})
+	}
+	// Per target IP: forwards and sites to the same machine.
+	ips := map[string][]string{}
+	for _, k := range keys {
+		if ip := labels[k]["target_ip"]; ip != "" && !strings.HasPrefix(k, "d:") {
+			ips[ip] = append(ips[ip], k)
 		}
+	}
+	var ipList []string
+	for ip := range ips {
+		ipList = append(ipList, ip)
+	}
+	sort.Strings(ipList)
+	for _, ip := range ipList {
+		add("target "+ip, ips[ip]...)
+	}
+	// Per node: the links a server measured (its WireGuard traffic).
+	byNode := map[string][]string{}
+	var links []string
+	for _, k := range keys {
+		if strings.HasPrefix(k, "d:") {
+			_, by, _ := strings.Cut(k[2:], "@")
+			byNode[by] = append(byNode[by], k)
+			links = append(links, k)
+		}
+	}
+	var nodes []string
+	for id := range byNode {
+		nodes = append(nodes, id)
+	}
+	sort.Slice(nodes, func(i, j int) bool { return m.name(nodes[i]) < m.name(nodes[j]) })
+	for _, id := range nodes {
+		add("node "+m.name(id)+" (all links)", byNode[id]...)
+	}
+	for _, k := range links {
+		peer, by, _ := strings.Cut(k[2:], "@")
+		add(m.name(peer)+" <-> "+m.name(by), k)
 	}
 	return rows
 }
