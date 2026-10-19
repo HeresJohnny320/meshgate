@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -55,9 +56,9 @@ type Service struct {
 	Runtime func() Runtime
 	// Traffic gathers live traffic from every server (nil: not available).
 	Traffic func() []traffic.Node
-	// History returns traffic history for a range ("6h", "1d", "1w", "1m",
-	// "1y") from the log server (nil: not available here).
-	History func(rng string) (any, error)
+	// History returns traffic history: a range ("6h", "1d", "1w", "1m",
+	// "1y"), or from/to (unix seconds) with a step for downloads.
+	History func(q url.Values) (any, error)
 	// Update makes node update itself to the latest release (nil: not
 	// available here).
 	Update func(node string) (string, error)
@@ -657,7 +658,7 @@ func (s *Service) Handler(prefix string) http.Handler {
 		if s.History == nil {
 			return nil, errors.New("traffic history is not available here")
 		}
-		return s.History(r.URL.Query().Get("range"))
+		return s.History(r.URL.Query())
 	})
 	route("POST history-settings", func(r *http.Request) (any, error) {
 		var b struct {

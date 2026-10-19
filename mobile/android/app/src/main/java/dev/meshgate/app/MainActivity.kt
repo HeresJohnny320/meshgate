@@ -595,6 +595,23 @@ fun ColumnScope.AdminScreen(onClose: () -> Unit) {
     var web by remember { mutableStateOf<WebView?>(null) }
     var server by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    // Downloads from the dashboard (traffic history): Android's "save as".
+    var saving by remember { mutableStateOf<Pair<String, String>?>(null) } // mime, text
+    val saveAs = rememberLauncherForActivityResult(object : ActivityResultContracts.CreateDocument("text/plain") {
+        override fun createIntent(context: android.content.Context, input: String) =
+            super.createIntent(context, input).setType(saving?.first ?: "text/plain")
+    }) { uri ->
+        val text = saving?.second
+        saving = null
+        if (uri == null || text == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { ctx.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) } != null }.getOrDefault(false)
+            }
+            android.widget.Toast.makeText(ctx, if (ok) "Saved" else "Could not save the file", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
     BackHandler {
         val w = web
         if (w != null && w.canGoBack()) w.goBack() else onClose()
@@ -633,6 +650,14 @@ fun ColumnScope.AdminScreen(onClose: () -> Unit) {
                             view.evaluateJavascript(
                                 "window.__meshgateReply($id, ${reply.optInt("status")}, ${JSONObject.quote(reply.optString("body"))})", null,
                             )
+                        }
+                    }
+
+                    @JavascriptInterface
+                    fun save(name: String, mime: String, text: String) {
+                        scope.launch {
+                            saving = mime to text
+                            saveAs.launch(name)
                         }
                     }
                 }, "MeshgateApp")

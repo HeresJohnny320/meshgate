@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,6 +80,33 @@ func (a *Agent) flushHistory(start time.Time) {
 	a.hist.mu.Unlock()
 	if srv.ID == a.Cfg.NodeID {
 		a.localHistory().Maintain(time.Now(), netw.HistoryDays())
+	} else {
+		a.moveHistory(srv)
+	}
+}
+
+// moveHistory hands the days this server stored while it was the log server
+// to the current one, deleting each file once the new server has it.
+func (a *Agent) moveHistory(srv model.Node) {
+	st := a.localHistory()
+	for _, name := range st.Files() {
+		data, err := st.Export(name)
+		if err != nil {
+			continue
+		}
+		res, err := (&http.Client{Timeout: 60 * time.Second}).Post(
+			a.meshURL(srv, "/v1/history/import?name="+name), "application/octet-stream", bytes.NewReader(data))
+		if err != nil {
+			log.Printf("traffic history: moving %s to log server %s: %v (retrying later)", name, srv.Name, err)
+			return
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			log.Printf("traffic history: moving %s to log server %s: %s (retrying later)", name, srv.Name, res.Status)
+			return
+		}
+		st.Remove(name)
+		log.Printf("traffic history: moved %s to the log server %s", name, srv.Name)
 	}
 }
 
@@ -131,52 +161,92 @@ func postJSON(url string, v any) error {
 	return nil
 }
 
-// History answers the UIs: points for a range, from the log server.
-func (a *Agent) History(rng string) (any, error) {
-	r, ok := history.Ranges[rng]
-	if !ok {
-		rng, r = "1d", history.Ranges["1d"]
+// histQuery is one request for history: a preset range, or a download's
+// from/to (unix seconds) and step.
+type histQuery struct {
+	rng            string
+	from, to, step int64
+}
+
+// maxExportPoints bounds a download (a month of 5-minute points, a year of
+// hourly ones, per series).
+const maxExportPoints = 9000
+
+// exportSteps are the download resolutions, in seconds.
+var exportSteps = map[int64]bool{300: true, 900: true, 3600: true, 86400: true}
+
+func parseHistQuery(q url.Values) (histQuery, error) {
+	if q.Get("from") == "" {
+		rng := q.Get("range")
+		r, ok := history.Ranges[rng]
+		if !ok {
+			rng, r = "1d", history.Ranges["1d"]
+		}
+		step := int64(r.Step / time.Second)
+		to := time.Now().Truncate(r.Step).Add(r.Step).Unix()
+		return histQuery{rng: rng, from: to - int64(r.Span/time.Second), to: to, step: step}, nil
+	}
+	from, err1 := strconv.ParseInt(q.Get("from"), 10, 64)
+	to, err2 := strconv.ParseInt(q.Get("to"), 10, 64)
+	step, err3 := strconv.ParseInt(q.Get("step"), 10, 64)
+	switch {
+	case err1 != nil || err2 != nil || err3 != nil || from <= 0 || to <= from:
+		return histQuery{}, fmt.Errorf("pick a start and an end after it")
+	case !exportSteps[step]:
+		return histQuery{}, fmt.Errorf("detail must be 5 minutes, 15 minutes, 1 hour or 1 day")
+	case (to-from)/step > maxExportPoints:
+		return histQuery{}, fmt.Errorf("too much detail for that period (%d points per series, at most %d): pick a coarser detail or a shorter period",
+			(to-from)/step, maxExportPoints)
+	}
+	return histQuery{rng: "custom", from: from, to: to, step: step}, nil
+}
+
+func (h histQuery) values() url.Values {
+	if h.rng != "custom" {
+		return url.Values{"range": {h.rng}}
+	}
+	return url.Values{"from": {strconv.FormatInt(h.from, 10)}, "to": {strconv.FormatInt(h.to, 10)}, "step": {strconv.FormatInt(h.step, 10)}}
+}
+
+// History answers the UIs: points for a range or a download, from the log
+// server.
+func (a *Agent) History(q url.Values) (any, error) {
+	hq, err := parseHistQuery(q)
+	if err != nil {
+		return nil, err
 	}
 	netw, _ := store.Get[model.Network](a.Store, model.Key(model.KindNetwork, "main"))
 	srv := a.logServer(netw)
 	if srv.ID != a.Cfg.NodeID {
-		res, err := (&http.Client{Timeout: 20 * time.Second}).Get(a.meshURL(srv, "/v1/history?range="+rng))
+		res, err := (&http.Client{Timeout: 60 * time.Second}).Get(a.meshURL(srv, "/v1/history?"+hq.values().Encode()))
 		if err != nil {
 			return nil, fmt.Errorf("log server %s is not reachable: %v", srv.Name, err)
 		}
 		defer res.Body.Close()
-		var out map[string]any
 		if res.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("log server %s: %s", srv.Name, res.Status)
+			msg, _ := io.ReadAll(io.LimitReader(res.Body, 300))
+			return nil, fmt.Errorf("log server %s: %s %s", srv.Name, res.Status, strings.TrimSpace(string(msg)))
 		}
+		var out map[string]any
 		return out, json.NewDecoder(res.Body).Decode(&out)
 	}
-	return a.queryHistory(rng, r.Span, r.Step, srv.Name)
+	return a.queryHistory(hq, srv.Name)
 }
 
-func (a *Agent) queryHistory(rng string, span, step time.Duration, server string) (map[string]any, error) {
-	to := time.Now().Truncate(step).Add(step).Unix()
-	from := to - int64(span/time.Second)
-	series, err := a.localHistory().Query(from, to, int64(step/time.Second))
+func (a *Agent) queryHistory(hq histQuery, server string) (map[string]any, error) {
+	series, err := a.localHistory().Query(hq.from, hq.to, hq.step)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"range": rng, "from": from, "to": to, "step": int64(step / time.Second),
+	return map[string]any{"range": hq.rng, "from": hq.from, "to": hq.to, "step": hq.step,
 		"server": server, "series": series}, nil
 }
 
 // serveHistory is the log server's side: servers post points, any server
 // may query (mesh port).
 func (a *Agent) serveHistory(w http.ResponseWriter, r *http.Request) {
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	caller, ok := model.Node{}, false
-	for _, n := range store.List[model.Node](a.Store, model.KindNode) {
-		if n.MeshIP == ip && n.Kind == model.NodeServer {
-			caller, ok = n, true
-		}
-	}
+	caller, ok := a.serverCaller(w, r)
 	if !ok {
-		http.Error(w, "only servers", http.StatusForbidden)
 		return
 	}
 	if r.Method == http.MethodPost {
@@ -197,19 +267,51 @@ func (a *Agent) serveHistory(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	rng := r.URL.Query().Get("range")
-	rr, ok := history.Ranges[rng]
-	if !ok {
-		rng, rr = "1d", history.Ranges["1d"]
+	hq, err := parseHistQuery(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 	self, _ := store.Get[model.Node](a.Store, model.Key(model.KindNode, a.Cfg.NodeID))
-	out, err := a.queryHistory(rng, rr.Span, rr.Step, self.Name)
+	out, err := a.queryHistory(hq, self.Name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+// serveHistoryImport takes a day file from the previous log server.
+func (a *Agent) serveHistoryImport(w http.ResponseWriter, r *http.Request) {
+	if _, ok := a.serverCaller(w, r); !ok {
+		return
+	}
+	netw, _ := store.Get[model.Network](a.Store, model.Key(model.KindNetwork, "main"))
+	if a.logServer(netw).ID != a.Cfg.NodeID {
+		http.Error(w, "not the log server", http.StatusConflict)
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 256<<20))
+	if err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if _, err := a.localHistory().Import(r.URL.Query().Get("name"), data); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+}
+
+// serverCaller is the mesh server making the request, or a 403.
+func (a *Agent) serverCaller(w http.ResponseWriter, r *http.Request) (model.Node, bool) {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	for _, n := range store.List[model.Node](a.Store, model.KindNode) {
+		if n.MeshIP == ip && n.Kind == model.NodeServer {
+			return n, true
+		}
+	}
+	http.Error(w, "only servers", http.StatusForbidden)
+	return model.Node{}, false
 }
 
 func hasSuffix(s, suf string) bool { return len(s) >= len(suf) && s[len(s)-len(suf):] == suf }

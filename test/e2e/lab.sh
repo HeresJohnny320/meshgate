@@ -387,6 +387,20 @@ check "history: home reads it from the log server vps" "echo '$H' | grep -q '\"s
 check "history: the masq forward's traffic was recorded" "echo '$H' | python3 -c \"import json,sys; h=json.load(sys.stdin); assert any(b[3] > 0 for b in h['series']['f:$MASQ_ID'])\""
 check "history: vps keeps it in its day file" "ls '$D/vps/history/' | grep -q '\.bin'"
 
+echo; echo "== traffic history: switching the log server to home moves vps's files there"
+HOME_ID=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([n["value"]["id"] for n in v["nodes"] if n["value"]["name"]=="home"][0])')
+api vps history-settings "{\"log_server\":\"$HOME_ID\",\"log_days\":365}" >/dev/null
+for i in $(seq 1 30); do [ -z "$(ls "$D/vps/history/" 2>/dev/null)" ] && break; sleep 2; done
+H=$(api vps "history?range=6h")
+check "history move: vps no longer keeps files" "[ -z \"\$(ls '$D/vps/history/')\" ]"
+check "history move: home has them" "ls '$D/home/history/' | grep -q '\.bin'"
+check "history move: vps reads it from home, old traffic included" "echo '$H' | python3 -c \"import json,sys; h=json.load(sys.stdin); assert h['server']=='home'; assert any(b[3] > 0 for b in h['series']['f:$MASQ_ID'])\""
+NOW=$(date +%s)
+H=$(api home "history?from=$((NOW-7200))&to=$((NOW+300))&step=300")
+check "history download: a chosen period at 5-minute detail" "echo '$H' | python3 -c \"import json,sys; h=json.load(sys.stdin); assert h['step']==300 and h['series']['f:$MASQ_ID']\""
+check "history download: too much detail is refused" "! api home \"history?from=$((NOW-86400*365))&to=$NOW&step=300\" >/dev/null"
+api vps history-settings '{"log_server":"","log_days":365}' >/dev/null
+
 echo; echo "== remote update: vps tells home to install the latest release"
 # Fake GitHub on the "internet": release v9.9.9 is this binary plus a few
 # bytes (still runs, different checksum), with matching SHA256SUMS.

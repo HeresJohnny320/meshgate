@@ -7,6 +7,7 @@ package history
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"encoding/binary"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -201,9 +203,15 @@ func (s *Store) Maintain(now time.Time, keepDays int) error {
 	return nil
 }
 
+// gzipFile compresses a day into its .gz, after what the .gz already holds
+// (points imported from a previous log server): gzip members concatenate.
 func gzipFile(path string) error {
 	in, err := os.ReadFile(path)
 	if err != nil {
+		return err
+	}
+	old, err := os.ReadFile(path + ".gz")
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	tmp := path + ".gz.tmp"
@@ -211,6 +219,7 @@ func gzipFile(path string) error {
 	if err != nil {
 		return err
 	}
+	f.Write(old)
 	zw, _ := gzip.NewWriterLevel(f, gzip.BestCompression)
 	zw.Write(in)
 	if err := zw.Close(); err != nil {
@@ -218,11 +227,77 @@ func gzipFile(path string) error {
 		os.Remove(tmp)
 		return err
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	if err := os.Rename(tmp, path+".gz"); err != nil {
 		return err
 	}
 	return os.Remove(path)
+}
+
+var fileName = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}\.bin(\.gz)?$`)
+
+// Files lists the stored day files (oldest first).
+func (s *Store) Files() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, _ := os.ReadDir(s.Dir)
+	var out []string
+	for _, e := range entries {
+		if fileName.MatchString(e.Name()) {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// Export returns a day file's contents, for moving it to a new log server.
+func (s *Store) Export(name string) ([]byte, error) {
+	if !fileName.MatchString(name) {
+		return nil, errors.New("bad file name")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return os.ReadFile(filepath.Join(s.Dir, name))
+}
+
+// Remove deletes a day file once it has been moved.
+func (s *Store) Remove(name string) error {
+	if !fileName.MatchString(name) {
+		return errors.New("bad file name")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return os.Remove(filepath.Join(s.Dir, name))
+}
+
+// Import adds the points of a day file from another log server to this
+// store (merged with what is already here for that day).
+func (s *Store) Import(name string, data []byte) (int, error) {
+	if !fileName.MatchString(name) {
+		return 0, errors.New("bad file name")
+	}
+	var r io.Reader = bytes.NewReader(data)
+	if strings.HasSuffix(name, ".gz") {
+		zr, err := gzip.NewReader(r)
+		if err != nil {
+			return 0, err
+		}
+		defer zr.Close()
+		r = zr
+	}
+	br := bufio.NewReader(r)
+	var pts []Point
+	for {
+		p, err := decode(br)
+		if err != nil {
+			break
+		}
+		pts = append(pts, p)
+	}
+	return len(pts), s.Append(pts)
 }
 
 // Bucket is a series over one step of a query: averages are averaged,
@@ -240,36 +315,34 @@ func (s *Store) Query(from, to, step int64) (map[string][]Bucket, error) {
 	sums := map[string]map[int64]*agg{}
 	for d := time.Unix(from, 0).UTC().Truncate(24 * time.Hour); d.Unix() <= to; d = d.AddDate(0, 0, 1) {
 		name := d.Format("2006-01-02")
-		r, closer, err := open(filepath.Join(s.Dir, name))
-		if err != nil {
-			continue
+		for _, src := range dayReaders(filepath.Join(s.Dir, name)) {
+			for {
+				p, err := decode(src.r)
+				if err != nil {
+					break
+				}
+				if p.T < from || p.T >= to {
+					continue
+				}
+				b := from + (p.T-from)/step*step
+				m := sums[p.Key]
+				if m == nil {
+					m = map[int64]*agg{}
+					sums[p.Key] = m
+				}
+				a := m[b]
+				if a == nil {
+					a = &agg{}
+					m[b] = a
+				}
+				a.n++
+				a.sumIn += float64(p.AvgIn)
+				a.sumOut += float64(p.AvgOut)
+				a.pIn = math.Max(a.pIn, float64(p.PeakIn))
+				a.pOut = math.Max(a.pOut, float64(p.PeakOut))
+			}
+			src.close()
 		}
-		for {
-			p, err := decode(r)
-			if err != nil {
-				break
-			}
-			if p.T < from || p.T >= to {
-				continue
-			}
-			b := from + (p.T-from)/step*step
-			m := sums[p.Key]
-			if m == nil {
-				m = map[int64]*agg{}
-				sums[p.Key] = m
-			}
-			a := m[b]
-			if a == nil {
-				a = &agg{}
-				m[b] = a
-			}
-			a.n++
-			a.sumIn += float64(p.AvgIn)
-			a.sumOut += float64(p.AvgOut)
-			a.pIn = math.Max(a.pIn, float64(p.PeakIn))
-			a.pOut = math.Max(a.pOut, float64(p.PeakOut))
-		}
-		closer()
 	}
 	out := map[string][]Bucket{}
 	for k, m := range sums {
@@ -285,20 +358,26 @@ func (s *Store) Query(from, to, step int64) (map[string][]Bucket, error) {
 	return out, nil
 }
 
-func open(base string) (*bufio.Reader, func(), error) {
+type dayReader struct {
+	r     *bufio.Reader
+	close func()
+}
+
+// dayReaders opens a day's compressed part and its uncompressed part (a past
+// day has both while imported points wait for the next Maintain).
+func dayReaders(base string) []dayReader {
+	var out []dayReader
+	if f, err := os.Open(base + ".bin.gz"); err == nil {
+		if zr, err := gzip.NewReader(f); err == nil {
+			out = append(out, dayReader{bufio.NewReader(zr), func() { zr.Close(); f.Close() }})
+		} else {
+			f.Close()
+		}
+	}
 	if f, err := os.Open(base + ".bin"); err == nil {
-		return bufio.NewReader(f), func() { f.Close() }, nil
+		out = append(out, dayReader{bufio.NewReader(f), func() { f.Close() }})
 	}
-	f, err := os.Open(base + ".bin.gz")
-	if err != nil {
-		return nil, nil, err
-	}
-	zr, err := gzip.NewReader(f)
-	if err != nil {
-		f.Close()
-		return nil, nil, err
-	}
-	return bufio.NewReader(zr), func() { zr.Close(); f.Close() }, nil
+	return out
 }
 
 // Ranges are the periods the UIs offer, with their step.

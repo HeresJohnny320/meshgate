@@ -110,9 +110,16 @@
             <div class="seg" id="hist-range">
               <button data-r="6h">6h</button><button data-r="1d" class="active">1 day</button><button data-r="1w">1 week</button><button data-r="1m">1 month</button><button data-r="1y">1 year</button>
             </div>
-            <label>Show <select id="hist-series"></select></label>
+            <div class="hist-show"><label>Show <select id="hist-series"></select></label>
+              <button type="button" class="ghost" id="hist-download">Download…</button></div>
           </div>
-          <div id="hist-chart"></div>
+          <div class="hist-stats" id="hist-stats"></div>
+          <div class="hist-legend" id="hist-legend">
+            <button type="button" data-s="in" aria-pressed="true"><i class="k-in"></i>To target (in)</button>
+            <button type="button" data-s="out" aria-pressed="true"><i class="k-out"></i>From target (out)</button>
+            <button type="button" data-s="peak" aria-pressed="true"><i class="k-peak"></i>Peaks</button>
+          </div>
+          <div id="hist-chart" tabindex="0" aria-label="Traffic history chart. Use the arrow keys to read values."></div>
           <p class="hint" id="hist-info"></p>
         </div>
         <h2 class="gap">By target IP</h2>

@@ -39,7 +39,8 @@ async function api(path, body) {
       headers: { "Content-Type": "application/json", "X-Meshgate": "1" },
       body: JSON.stringify(body),
     };
-    const res = await fetch(BASE + path, opts);
+    // On pfSense the path travels as ?p=…, so its own query must be encoded.
+    const res = await fetch(BASE ? BASE + encodeURIComponent(path) : path, opts);
     status = res.status;
     data = await res.json().catch(() => ({}));
   }
@@ -115,25 +116,48 @@ async function renderChangelog() {
 
 // ---------- traffic history ----------
 
-let hist = null, histRange = "1d";
+// Chosen period, series and visible lines are remembered per browser.
+const histPref = (() => { try { return JSON.parse(localStorage.getItem("meshgate-hist")) || {}; } catch { return {}; } })();
+const saveHistPref = () => { try { localStorage.setItem("meshgate-hist", JSON.stringify(histPref)); } catch {} };
+let hist = null, histRange = histPref.range || "1d", histPts = [], histHover = -1;
+const histShow = { in: true, out: true, peak: true, ...(histPref.show || {}) };
 const bps = (bytes) => {
   const b = bytes * 8, u = ["bps", "kbps", "Mbps", "Gbps"];
   const i = Math.min(3, Math.max(0, Math.floor(Math.log10(Math.max(b, 1)) / 3)));
-  return (b / 1000 ** i).toFixed(i ? 1 : 0) + " " + u[i];
+  return (b / 1000 ** i).toFixed(i && b / 1000 ** i < 10 ? 1 : 0) + " " + u[i];
 };
 
+document.querySelectorAll("#hist-range button").forEach((x) => x.classList.toggle("active", x.dataset.r === histRange));
+document.querySelectorAll("#hist-legend button").forEach((x) => x.setAttribute("aria-pressed", histShow[x.dataset.s]));
 $("#hist-range").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-r]");
   if (!b) return;
-  histRange = b.dataset.r;
+  histRange = histPref.range = b.dataset.r;
+  saveHistPref();
   document.querySelectorAll("#hist-range button").forEach((x) => x.classList.toggle("active", x === b));
   loadHistory().catch((err) => { $("#hist-info").textContent = err.message; });
 });
-$("#hist-series").addEventListener("change", drawHistory);
+$("#hist-series").addEventListener("change", (e) => { histPref.series = e.target.value; saveHistPref(); drawHistory(); });
+$("#hist-legend").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-s]");
+  if (!b) return;
+  histShow[b.dataset.s] = !histShow[b.dataset.s];
+  histPref.show = histShow;
+  saveHistPref();
+  b.setAttribute("aria-pressed", histShow[b.dataset.s]);
+  drawHistory();
+});
+new ResizeObserver(() => drawHistory()).observe($("#hist-chart"));
 
 async function loadHistory() {
-  $("#hist-info").textContent = "Loading…";
-  hist = await api("/api/history?range=" + histRange);
+  const chart = $("#hist-chart");
+  chart.classList.add("loading"); // keep the old picture while the new one loads
+  if (!hist) $("#hist-info").textContent = "Loading…";
+  try {
+    hist = await api("/api/history?range=" + histRange);
+  } finally {
+    chart.classList.remove("loading");
+  }
   // Choices: everything, per target IP (forwards + sites to it), per forward,
   // per site, per device link.
   const node = (id) => view.nodes.find((n) => n.value.id === id)?.value;
@@ -149,52 +173,277 @@ async function loadHistory() {
     const [peer, by] = k.slice(2).split("@");
     opts.push([k, `Device ${nodeName(peer)} ↔ ${nodeName(by)}`]);
   });
-  const sel = $("#hist-series"), keep = sel.value;
+  const sel = $("#hist-series"), keep = sel.value || histPref.series;
   sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
   if (opts.some(([v]) => v === keep)) sel.value = keep;
   hist.ipKeys = ips;
   drawHistory();
 }
 
+// niceStep: 1, 2 or 5 times a power of ten, so the axis reads 0 / 5 / 10 / 15 Mbps.
+const niceStep = (max, n) => {
+  const raw = max / n, p = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw);
+};
+
 function drawHistory() {
-  if (!hist) return;
+  const chart = $("#hist-chart");
+  if (!hist || chart.offsetParent === null) return;
   const choice = $("#hist-series").value;
   const keys = choice === "all" ? Object.keys(hist.series || {}).filter((k) => !k.startsWith("d:"))
     : choice.startsWith("ip:") ? (hist.ipKeys[choice.slice(3)] || []) : [choice];
-  // Sum the chosen series per time step.
+  // Sum the chosen series per time step: [start, avg in, avg out, peak in, peak out].
   const n = Math.round((hist.to - hist.from) / hist.step);
   const pts = Array.from({ length: n }, (_, i) => [hist.from + i * hist.step, 0, 0, 0, 0]);
+  let any = false;
   for (const k of keys) {
     for (const b of (hist.series || {})[k] || []) {
       const i = Math.round((b[0] - hist.from) / hist.step);
-      if (i >= 0 && i < n) for (let j = 1; j < 5; j++) pts[i][j] += b[j];
+      if (i >= 0 && i < n) { for (let j = 1; j < 5; j++) pts[i][j] += b[j]; any = true; }
     }
   }
-  const W = 800, H = 240, L = 64, B = 22, T = 10;
-  const max = Math.max(1, ...pts.map((p) => Math.max(p[3], p[4])));
-  const x = (i) => L + (i / Math.max(1, n - 1)) * (W - L - 8);
+  histPts = pts;
+
+  const W = Math.max(280, chart.clientWidth), H = W < 500 ? 200 : 260;
+  const L = 62, R = 10, T = 12, B = 24;
+  const cols = [histShow.in && 1, histShow.out && 2, histShow.peak && histShow.in && 3, histShow.peak && histShow.out && 4].filter(Boolean);
+  const top = Math.max(1, ...pts.flatMap((p) => cols.map((j) => p[j])));
+  const step = niceStep(top * 8, W < 500 ? 3 : 4) / 8, max = Math.ceil(top / step) * step;
+  const x = (i) => L + (n > 1 ? i / (n - 1) : 0.5) * (W - L - R);
   const y = (v) => H - B - (v / max) * (H - B - T);
-  const line = (j) => pts.map((p, i) => `${x(i).toFixed(1)},${y(p[j]).toFixed(1)}`).join(" ");
-  const fmtT = (t) => {
+  const path = (j) => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[j]).toFixed(1)}`).join("");
+  const area = (j) => `${path(j)}L${x(n - 1).toFixed(1)},${y(0)}L${x(0).toFixed(1)},${y(0)}Z`;
+
+  let grid = "";
+  for (let v = 0; v <= max + step / 2; v += step) {
+    grid += `<line class="${v ? "grid" : "base"}" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+      <text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${v ? bps(v) : "0"}</text>`;
+  }
+  const short = hist.step < 3600, week = hist.range === "1w";
+  const fmtTick = (t) => {
     const d = new Date(t * 1000);
-    return hist.step < 3600 ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : d.toLocaleDateString([], { month: "short", day: "numeric" });
+    if (short) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (week) return d.toLocaleDateString([], { weekday: "short", day: "numeric" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
   };
-  const grid = [0, 0.5, 1].map((f) => `<line class="axis" x1="${L}" x2="${W - 8}" y1="${y(max * f)}" y2="${y(max * f)}"/>
-    <text x="${L - 6}" y="${y(max * f) + 4}" text-anchor="end">${bps(max * f)}</text>`).join("");
-  const ticks = [0, Math.floor((n - 1) / 2), n - 1].map((i) => `<text x="${x(i)}" y="${H - 4}" text-anchor="middle">${fmtT(pts[i][0])}</text>`).join("");
-  $("#hist-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="traffic history">${grid}${ticks}
-    <polyline fill="none" stroke="var(--accent)" stroke-opacity=".35" stroke-dasharray="3 3" stroke-width="1.2" points="${line(3)}"/>
-    <polyline fill="none" stroke="var(--ok)" stroke-opacity=".35" stroke-dasharray="3 3" stroke-width="1.2" points="${line(4)}"/>
-    <polyline fill="none" stroke="var(--accent)" stroke-width="2" points="${line(1)}"/>
-    <polyline fill="none" stroke="var(--ok)" stroke-width="2" points="${line(2)}"/></svg>
-    <div class="hist-legend"><span><i style="background:var(--accent)"></i>to target (in)</span><span><i style="background:var(--ok)"></i>from target (out)</span>
-    <span>dashed: peaks</span></div>`;
-  const totIn = pts.reduce((s, p) => s + p[1] * hist.step, 0), totOut = pts.reduce((s, p) => s + p[2] * hist.step, 0);
+  const nt = Math.max(3, Math.min(7, Math.floor((W - L) / 100)));
+  let ticks = "";
+  for (let k = 0; k < nt; k++) {
+    const i = Math.round((k / (nt - 1)) * (n - 1));
+    const anchor = k === 0 ? "start" : k === nt - 1 ? "end" : "middle";
+    ticks += `<text x="${x(i)}" y="${H - 6}" text-anchor="${anchor}">${fmtTick(pts[i][0])}</text>`;
+  }
+
+  const layer = (j, color) => (histShow[j === 1 ? "in" : "out"] ? `
+    <path d="${area(j)}" fill="url(#g${j})"/>
+    ${histShow.peak ? `<path d="${path(j + 2)}" fill="none" stroke="${color}" stroke-opacity=".55" stroke-width="1" stroke-dasharray="3 3"/>` : ""}
+    <path d="${path(j)}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>` : "");
+  const grad = (j, color) => `<linearGradient id="g${j}" x1="0" x2="0" y1="0" y2="1">
+    <stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity=".02"/></linearGradient>`;
+  chart.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Traffic history">
+    <defs>${grad(1, "var(--s-in)")}${grad(2, "var(--s-out)")}</defs>
+    ${grid}${ticks}${layer(1, "var(--s-in)")}${layer(2, "var(--s-out)")}
+    <g id="hist-hover" visibility="hidden"><line class="cross" y1="${T}" y2="${H - B}"/>
+      <circle class="dot" r="4.5" fill="var(--s-in)"/><circle class="dot" r="4.5" fill="var(--s-out)"/></g>
+    <rect x="${L}" y="0" width="${W - L - R}" height="${H - B}" fill="transparent" id="hist-hit"/></svg>
+    <div class="hist-tip" hidden></div>${any ? "" : `<div class="hist-empty">No traffic recorded in this period</div>`}`;
+
+  const hit = $("#hist-hit");
+  const at = (e) => {
+    const r = hit.getBoundingClientRect();
+    return Math.max(0, Math.min(n - 1, Math.round(((e.clientX - r.left) / r.width) * (n - 1))));
+  };
+  hit.addEventListener("pointermove", (e) => showHistTip(at(e)));
+  hit.addEventListener("pointerdown", (e) => showHistTip(at(e)));
+  hit.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") showHistTip(-1); });
+  chart.onkeydown = (e) => {
+    const d = { ArrowLeft: -1, ArrowRight: 1, Home: -1e9, End: 1e9 }[e.key];
+    if (d === undefined) { if (e.key === "Escape") showHistTip(-1); return; }
+    e.preventDefault();
+    showHistTip(Math.max(0, Math.min(n - 1, (histHover < 0 ? n - 1 : histHover) + d)));
+  };
+  chart.onblur = () => showHistTip(-1);
+  drawHistory.geo = { x, y, W, L, R };
+  if (histHover >= 0 && histHover < n) showHistTip(histHover);
+
+  const sum = (j) => pts.reduce((s, p) => s + p[j] * hist.step, 0);
   const peak = Math.max(0, ...pts.map((p) => Math.max(p[3], p[4])));
-  $("#hist-info").textContent = keys.length
-    ? `Total ${bytes(totIn)} in / ${bytes(totOut)} out · peak ${bps(peak)} · stored on ${hist.server}`
-    : `Nothing recorded yet for this · stored on ${hist.server}`;
+  const peakAt = pts.find((p) => Math.max(p[3], p[4]) === peak);
+  const tile = (v, l) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
+  $("#hist-stats").innerHTML = tile(bytes(sum(1)), "to target (in)") + tile(bytes(sum(2)), "from target (out)")
+    + tile(peak ? bps(peak) : "–", peak ? "peak, " + fmtWhen(peakAt[0]) : "peak")
+    + tile(bps((sum(1) + sum(2)) / (hist.to - hist.from)), "average, both ways");
+  $("#hist-info").textContent = `${keys.length ? "" : "Nothing recorded yet for this · "}Stored on ${hist.server} · one point every ${
+    hist.step >= 3600 ? hist.step / 3600 + " h" : hist.step / 60 + " min"}`;
+}
+
+// ---------- traffic history download ----------
+
+const histName = (k) => {
+  if (k.startsWith("ip:")) return "Target IP " + k.slice(3);
+  const id = k.slice(2);
+  if (k.startsWith("f:")) return "Forward " + ((view.forwards || []).find((x) => x.value.id === id)?.value.name || id);
+  if (k.startsWith("r:")) return "Site " + ((view.routes || []).find((x) => x.value.id === id)?.value.hostname || id);
+  if (k.startsWith("d:")) { const [peer, by] = id.split("@"); return `Device ${nodeName(peer)} - ${nodeName(by)}`; }
+  return k === "all" ? "Everything" : k;
+};
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const localTime = (t) => { const d = new Date(t * 1000); return `${ymd(d)} ${d.toTimeString().slice(0, 5)}`; };
+const exportSteps = [[300, "5 minutes"], [900, "15 minutes"], [3600, "1 hour"], [86400, "1 day"]];
+const MAX_EXPORT = 9000; // points per series, same limit as the server
+
+function downloadDialog() {
+  const today = new Date(), sel = $("#hist-series");
+  const shown = sel.selectedOptions[0]?.textContent || "Everything";
+  openDialog("Download traffic history", `<div class="form-grid">
+    <div class="full"><div class="chips" id="dl-presets">
+      <button type="button" data-p="today">Today</button><button type="button" data-p="yesterday">Yesterday</button>
+      <button type="button" data-p="7d">Last 7 days</button><button type="button" data-p="month">This month</button>
+      <button type="button" data-p="lastmonth">Last month</button><button type="button" data-p="30d">Last 30 days</button>
+      <button type="button" data-p="year">This year</button><button type="button" data-p="365d">Last 365 days</button></div></div>
+    <label>From (day) <input type="date" name="from" value="${ymd(today)}" required></label>
+    <label>To (day, included) <input type="date" name="to" value="${ymd(today)}" required></label>
+    <label>Detail <select name="step">${exportSteps.map(([v, l]) => `<option value="${v}">${l}</option>`).join("")}</select></label>
+    <label>Format <select name="format"><option value="csv">CSV (Excel, Sheets)</option><option value="json">JSON</option><option value="txt">Text table</option></select></label>
+    <label class="full">What <select name="what"><option value="shown">${esc(shown)} (as in the graph)</option>
+      <option value="each">Every series separately</option></select></label>
+    <p class="hint full" id="dl-hint"></p></div>`,
+  async (fd) => {
+    const from = new Date(fd.get("from") + "T00:00").getTime() / 1000;
+    const to = new Date(fd.get("to") + "T00:00").getTime() / 1000 + 86400;
+    const step = +fd.get("step");
+    if (!(to > from)) throw new Error("The end day must be on or after the start day.");
+    const h = await api(`/api/history?from=${Math.floor(from)}&to=${Math.floor(to)}&step=${step}`);
+    const fmt = fd.get("format"), each = fd.get("what") === "each";
+    const text = histExport(h, each ? null : sel.value, fmt);
+    const what = each ? "all" : sel.value.replace(/^(f|r|d):/, "").replace(/[^a-zA-Z0-9.@-]+/g, "_");
+    saveFile(`meshgate-traffic-${what}-${fd.get("from")}_${fd.get("to")}.${fmt}`,
+      { csv: "text/csv", json: "application/json", txt: "text/plain" }[fmt], text);
+  }, { ok: "Download", done: "", reload: false });
+
+  const f = $("#dialog-form");
+  const fit = () => { // the finest detail that fits the period, and a hint
+    const days = (new Date(f.to.value) - new Date(f.from.value)) / 864e5 + 1;
+    const ok = (s) => (days * 86400) / s <= MAX_EXPORT;
+    [...f.step.options].forEach((o) => { o.disabled = !ok(+o.value); });
+    if (f.step.selectedOptions[0]?.disabled) f.step.value = exportSteps.find(([s]) => ok(s))?.[0] ?? 86400;
+    $("#dl-hint").textContent = days > 0
+      ? `${days} day${days > 1 ? "s" : ""} · ${Math.ceil((days * 86400) / f.step.value).toLocaleString()} rows per series. Speeds in bits per second, amounts in bytes, times in this device's time zone.`
+      : "The end day must be on or after the start day.";
+  };
+  f.from.onchange = f.to.onchange = f.step.onchange = fit;
+  $("#dl-presets").onclick = (e) => {
+    const p = e.target.closest("button[data-p]")?.dataset.p;
+    if (!p) return;
+    const d = (y, m, day) => ymd(new Date(y, m, day)), y = today.getFullYear(), m = today.getMonth(), day = today.getDate();
+    const [a, b] = {
+      today: [d(y, m, day), d(y, m, day)], yesterday: [d(y, m, day - 1), d(y, m, day - 1)],
+      "7d": [d(y, m, day - 6), d(y, m, day)], month: [d(y, m, 1), d(y, m, day)],
+      lastmonth: [d(y, m - 1, 1), d(y, m, 0)], "30d": [d(y, m, day - 29), d(y, m, day)],
+      year: [d(y, 0, 1), d(y, m, day)], "365d": [d(y, m, day - 364), d(y, m, day)],
+    }[p];
+    f.from.value = a; f.to.value = b;
+    f.step.value = 300; // finest that fits
+    fit();
+  };
+  fit();
+}
+
+// histExport turns a history answer into the chosen file: one row per series
+// and time step (steps without traffic included as zeros).
+function histExport(h, choice, fmt) {
+  const all = Object.keys(h.series || {}).sort();
+  let groups; // [name, keys]
+  if (choice === null) groups = all.map((k) => [histName(k), [k]]);
+  else if (choice === "all") groups = [["Everything", all.filter((k) => !k.startsWith("d:"))]];
+  else if (choice.startsWith("ip:")) groups = [[histName(choice), hist?.ipKeys?.[choice.slice(3)] || []]];
+  else groups = [[histName(choice), [choice]]];
+  const n = Math.round((h.to - h.from) / h.step), rows = [];
+  for (const [name, keys] of groups) {
+    const pts = Array.from({ length: n }, (_, i) => [h.from + i * h.step, 0, 0, 0, 0]);
+    for (const k of keys) for (const b of h.series[k] || []) {
+      const i = Math.round((b[0] - h.from) / h.step);
+      if (i >= 0 && i < n) for (let j = 1; j < 5; j++) pts[i][j] += b[j];
+    }
+    for (const p of pts) rows.push({
+      time: localTime(p[0]), unix: p[0], series: name,
+      avg_in_bps: Math.round(p[1] * 8), avg_out_bps: Math.round(p[2] * 8),
+      peak_in_bps: Math.round(p[3] * 8), peak_out_bps: Math.round(p[4] * 8),
+      bytes_in: Math.round(p[1] * h.step), bytes_out: Math.round(p[2] * h.step),
+    });
+  }
+  const cols = ["time", "unix", "series", "avg_in_bps", "avg_out_bps", "peak_in_bps", "peak_out_bps", "bytes_in", "bytes_out"];
+  if (fmt === "json") return JSON.stringify({ from: h.from, to: h.to, step_seconds: h.step, server: h.server, rows }, null, 1);
+  if (fmt === "csv") {
+    const q = (v) => (typeof v === "string" && /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    return [cols.join(","), ...rows.map((r) => cols.map((c) => q(r[c])).join(","))].join("\r\n") + "\r\n";
+  }
+  // Text: a readable table per series with human units.
+  const out = [`meshgate traffic history · ${localTime(h.from)} to ${localTime(h.to)} · one row per ${exportSteps.find(([s]) => s === h.step)?.[1] || h.step + " s"} · stored on ${h.server}`, ""];
+  const head = ["Time", "Avg in", "Avg out", "Peak in", "Peak out", "Data in", "Data out"];
+  for (const [name] of groups) {
+    const rs = rows.filter((r) => r.series === name);
+    const tIn = rs.reduce((s, r) => s + r.bytes_in, 0), tOut = rs.reduce((s, r) => s + r.bytes_out, 0);
+    const table = [head, ...rs.map((r) => [r.time, bps(r.avg_in_bps / 8), bps(r.avg_out_bps / 8), bps(r.peak_in_bps / 8),
+      bps(r.peak_out_bps / 8), bytes(r.bytes_in), bytes(r.bytes_out)])];
+    const w = head.map((_, i) => Math.max(...table.map((r) => String(r[i]).length)));
+    out.push(`== ${name} · total ${bytes(tIn)} in, ${bytes(tOut)} out`);
+    for (const r of table) out.push(r.map((v, i) => (i ? String(v).padStart(w[i]) : String(v).padEnd(w[i]))).join("  "));
+    out.push("");
+  }
+  return out.join("\n");
+}
+
+// saveFile hands a file to the browser, or to Android's "save as" in the app.
+function saveFile(name, mime, text) {
+  if (bridge?.save) return bridge.save(name, mime, text);
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+  const a = Object.assign(document.createElement("a"), { href: url, download: name });
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  toast("Downloaded " + name);
+}
+
+$("#hist-download").addEventListener("click", () => { if (view) downloadDialog(); });
+
+const fmtWhen = (t) => new Date(t * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+function showHistTip(i) {
+  histHover = i;
+  const g = $("#hist-hover"), tip = document.querySelector("#hist-chart .hist-tip");
+  if (!g || !tip) return;
+  if (i < 0) { g.setAttribute("visibility", "hidden"); tip.hidden = true; return; }
+  const { x, y, W } = drawHistory.geo, p = histPts[i];
+  const [line, dIn, dOut] = g.children;
+  line.setAttribute("x1", x(i)); line.setAttribute("x2", x(i));
+  dIn.setAttribute("cx", x(i)); dIn.setAttribute("cy", y(p[1])); dIn.setAttribute("visibility", histShow.in ? "inherit" : "hidden");
+  dOut.setAttribute("cx", x(i)); dOut.setAttribute("cy", y(p[2])); dOut.setAttribute("visibility", histShow.out ? "inherit" : "hidden");
+  g.setAttribute("visibility", "visible");
+
+  // Built with textContent: nothing from the data is parsed as HTML.
+  tip.replaceChildren();
+  const el = (tag, cls, text, parent = tip) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    parent.appendChild(e);
+    return e;
+  };
+  const end = new Date((p[0] + hist.step) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  el("div", "t", fmtWhen(p[0]) + " – " + end);
+  for (const [j, name, color] of [[1, "In", "var(--s-in)"], [2, "Out", "var(--s-out)"]]) {
+    if (!histShow[j === 1 ? "in" : "out"]) continue;
+    const r = el("div", "r");
+    el("i", "", undefined, r).style.color = color;
+    el("span", "", name, r);
+    el("b", "", bps(p[j]), r);
+    el("div", "sub", `peak ${bps(p[j + 2])} · ${bytes(p[j] * hist.step)}`);
+  }
+  tip.hidden = false;
+  const left = x(i) + 14, wTip = tip.offsetWidth;
+  tip.style.left = (left + wTip > W ? Math.max(0, x(i) - 14 - wTip) : left) + "px";
 }
 
 // ---------- traffic ----------
@@ -549,14 +798,14 @@ const nodeOptions = (list, sel) => list.map((n) => `<option value="${esc(n.id)}"
 const scopeField = (local) => `<div class="full"><label class="inline"><input type="radio" name="scope" value="cluster" ${local ? "" : "checked"}> Apply on all nodes</label>
   <label class="inline"><input type="radio" name="scope" value="local" ${local ? "checked" : ""}> Only on this node (${esc(nodeName(view.self_id))})</label></div>`;
 
-function openDialog(title, inner, onSubmit) {
+function openDialog(title, inner, onSubmit, { ok = "Save", done = "Saved", reload = true } = {}) {
   const d = $("#dialog"), f = $("#dialog-form");
   f.innerHTML = `<h2>${esc(title)}</h2>${inner}<p class="error" id="dialog-error"></p>
-    <div class="dialog-actions"><button value="cancel" class="ghost" formnovalidate>Cancel</button><button value="ok" id="dialog-ok">Save</button></div>`;
+    <div class="dialog-actions"><button value="cancel" class="ghost" formnovalidate>Cancel</button><button value="ok" id="dialog-ok">${esc(ok)}</button></div>`;
   f.onsubmit = async (e) => {
     if (e.submitter?.value !== "ok") return;
     e.preventDefault();
-    try { await onSubmit(new FormData(f), f); d.close(); refresh(); toast("Saved"); }
+    try { await onSubmit(new FormData(f), f); d.close(); if (reload) refresh(); if (done) toast(done); }
     catch (err) { $("#dialog-error").textContent = err.message; }
   };
   d.showModal();

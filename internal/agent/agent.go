@@ -176,6 +176,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		mux.HandleFunc("GET /v1/traffic", a.serveTraffic)
 		mux.HandleFunc("POST /v1/update", a.serveUpdate)
 		mux.HandleFunc("/v1/history", a.serveHistory)
+		mux.HandleFunc("POST /v1/history/import", a.serveHistoryImport)
 		mux.Handle("/admin/", webui.AppAPI(a.ops, func() bool {
 			s, err := a.self()
 			return err != nil || s.AppAdminOff

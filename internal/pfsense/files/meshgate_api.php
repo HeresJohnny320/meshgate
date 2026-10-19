@@ -21,8 +21,9 @@ function fail($code, $msg) {
 	exit;
 }
 
-// e.g. "/api/view", "/api/history?range=1d" (the only query anything sends).
-if (!preg_match('#^/?(api|auth)/([a-z-]+)(\?range=[0-9a-z]{1,4})?$#', $_GET['p'] ?? '', $m)) {
+// e.g. "/api/view", "/api/history?range=1d" or
+// "/api/history?from=..&to=..&step=.." (the only queries anything sends).
+if (!preg_match('#^/?(api|auth)/([a-z-]+)(\?(range=[0-9a-z]{1,4}|from=[0-9]{1,12}&to=[0-9]{1,12}&step=[0-9]{1,6}))?$#', $_GET['p'] ?? '', $m)) {
 	fail(404, "not found");
 }
 $post = $_SERVER['REQUEST_METHOD'] === 'POST';
@@ -40,7 +41,7 @@ $ch = curl_init("http://meshgate/v1/" . $m[2] . ($m[3] ?? ''));
 curl_setopt_array($ch, array(
 	CURLOPT_UNIX_SOCKET_PATH => '@@SOCKET@@',
 	CURLOPT_RETURNTRANSFER => true,
-	CURLOPT_TIMEOUT => 20,
+	CURLOPT_TIMEOUT => 90,
 	CURLOPT_CUSTOMREQUEST => $post ? 'POST' : 'GET',
 	CURLOPT_HTTPHEADER => array('Content-Type: application/json'),
 ));

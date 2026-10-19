@@ -83,3 +83,50 @@ func TestYearSize(t *testing.T) {
 	}
 	t.Logf("20 series: %d KB/day compressed, ~%.1f MB/year", fi.Size()/1024, float64(fi.Size())*365/1e6)
 }
+
+func TestMoveToNewLogServer(t *testing.T) {
+	day0 := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	mk := func(day int, key string) []Point {
+		var ps []Point
+		for i := 0; i < 288; i++ {
+			ps = append(ps, Point{T: day0.AddDate(0, 0, day).Add(time.Duration(i) * Interval).Unix(), Key: key, AvgIn: 100, PeakIn: 100})
+		}
+		return ps
+	}
+	now := day0.AddDate(0, 0, 1).Add(time.Hour)
+	// The old log server has day 0 (compressed) and part of day 1.
+	old := &Store{Dir: t.TempDir()}
+	old.Append(append(mk(0, "f:a"), mk(1, "f:a")[:12]...))
+	old.Maintain(now, 365)
+	// The new one already has day 0 compressed (another series) and the rest of day 1.
+	nw := &Store{Dir: t.TempDir()}
+	nw.Append(append(mk(0, "f:b"), mk(1, "f:a")[12:]...))
+	nw.Maintain(now, 365)
+
+	for _, name := range old.Files() {
+		data, err := old.Export(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := nw.Import(name, data); err != nil {
+			t.Fatal(name, err)
+		}
+		old.Remove(name)
+	}
+	if len(old.Files()) != 0 {
+		t.Fatal("old server kept files")
+	}
+	check := func(when string) {
+		got, _ := nw.Query(day0.Unix(), day0.AddDate(0, 0, 2).Unix(), int64(24*time.Hour/time.Second))
+		a, b := got["f:a"], got["f:b"]
+		if len(a) != 2 || a[0][1] != 100 || a[1][1] != 100 || len(b) != 1 || b[0][1] != 100 {
+			t.Fatalf("%s: merged history %v / %v", when, a, b)
+		}
+	}
+	check("before maintain")
+	nw.Maintain(now, 365) // folds the imported day 0 into its .gz
+	check("after maintain")
+	if _, err := nw.Import("../x.bin", nil); err == nil {
+		t.Fatal("bad name accepted")
+	}
+}

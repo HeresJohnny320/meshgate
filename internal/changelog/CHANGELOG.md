@@ -9,6 +9,9 @@
 + Traffic history: 5-minute averages and peaks per forward, HTTPS route, target IP and device link, kept a year (Traffic → History in the dashboard and app: 6 hours to 1 year)
 + Log server setting (Settings → Traffic history): pick which server stores the history (e.g. the VPS) and how many days to keep
 + TUI: TRAFFIC tab (8) with the history, `v` changes the period
++ History graph: hover or tap for the exact speeds, peaks and data at any time; totals, peak and average above it; buttons to show or hide in, out and peaks
++ Changing the log server moves the stored history to the new one and deletes it from the old one
++ Download traffic history as CSV, JSON or a text table: any days, month or year, 5-minute to daily detail, one series or all of them
 
 ## v0.2.13 · 2026-10-17
 + Changelog in the dashboard (Changelog tab), the TUI (CHANGES tab) and the app (Updates → What's new)

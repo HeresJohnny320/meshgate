@@ -424,8 +424,24 @@ for a home mesh.
   month or year, for everything together, one target IP, one forward, one
   HTTPS route or one device link. In the TUI: `8`, `v` for the period.
 
-Changing the log server starts a fresh history there; the old files stay on
-the previous server.
+Changing the log server moves the history: within 5 minutes the old log
+server sends its day files to the new one (merged with anything already
+there) and deletes each file once the new server has it. If the old server is
+offline at the time, it moves them when it comes back.
+
+The graph shows the total, peak and average for the period above it. Hover it
+(or tap it on a phone, arrow keys on a keyboard) to read the exact speeds,
+peaks and amount sent for any point. The *To target / From target / Peaks*
+buttons hide or show each line; the period and choice are remembered.
+
+**Download it:** **Traffic → History → Download…**: pick the days (Today,
+Yesterday, Last 7 days, This month, Last month, This year, … or any From/To
+days), the detail (5 minutes, 15 minutes, 1 hour or 1 day), the format (CSV for
+Excel or Sheets, JSON, or a readable text table) and either what the graph
+shows or every series separately. Each row has the time, average and peak
+speed in and out (bits per second) and the data moved (bytes). One download
+holds up to 9000 rows per series (a month at 5 minutes, a year at 1 hour). In
+the app it opens Android's *Save as*.
 
 ### Testing that everything works
 
