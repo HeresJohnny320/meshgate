@@ -5,6 +5,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/ops"
 )
 
-var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES", "CHANGES"}
+var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES", "CHANGES", "TRAFFIC"}
 
 // changeLines is the changelog shown on the CHANGES tab.
 var changeLines = func() []string {
@@ -40,11 +41,23 @@ const (
 	tabExits
 	tabDevices
 	tabChanges
+	tabTraffic
 )
 
+// histResp is the log server's answer for one range (ops "history").
+type histResp struct {
+	Step   int64                   `json:"step"`
+	Server string                  `json:"server"`
+	Series map[string][][5]float64 `json:"series"`
+}
+
+var histRanges = []string{"6h", "1d", "1w", "1m", "1y"}
+
 type viewMsg struct {
-	v   ops.View
-	err error
+	v       ops.View
+	err     error
+	hist    *histResp
+	histErr string
 }
 type tickMsg struct{}
 
@@ -61,13 +74,17 @@ type model_ struct {
 	theme   string
 	width   int
 	height  int
+	// TRAFFIC tab: history for histRange, fetched while the tab is open.
+	hist      *histResp
+	histErr   string
+	histRange string
 }
 
 // Run starts the TUI.
 func Run(socket string) error {
 	t := loadTheme()
 	applyTheme(t)
-	m := &model_{api: localapi.New(socket), theme: t.name}
+	m := &model_{api: localapi.New(socket), theme: t.name, histRange: "1d"}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -79,9 +96,19 @@ func tick() tea.Cmd {
 }
 
 func (m *model_) load() tea.Cmd {
+	tab, rng := m.tab, m.histRange
 	return func() tea.Msg {
 		v, err := m.api.View()
-		return viewMsg{v, err}
+		msg := viewMsg{v: v, err: err}
+		if tab == tabTraffic && err == nil {
+			var h histResp
+			if herr := m.api.Get("history?range="+rng, &h); herr != nil {
+				msg.histErr = herr.Error()
+			} else {
+				msg.hist = &h
+			}
+		}
+		return msg
 	}
 }
 
@@ -92,6 +119,9 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case viewMsg:
 		m.v, m.err = msg.v, msg.err
+		if msg.hist != nil || msg.histErr != "" {
+			m.hist, m.histErr = msg.hist, msg.histErr
+		}
 		if n := m.rows(); m.sel >= n {
 			m.sel = max(0, n-1)
 		}
@@ -134,8 +164,11 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tab, m.sel = (m.tab+1)%len(tabs), 0
 	case "shift+tab", "left", "h":
 		m.tab, m.sel = (m.tab-1+len(tabs))%len(tabs), 0
-	case "1", "2", "3", "4", "5", "6", "7":
+	case "1", "2", "3", "4", "5", "6", "7", "8":
 		m.tab, m.sel = int(key[0]-'1'), 0
+		if m.tab == tabTraffic {
+			return m, m.load()
+		}
 	case "up", "k":
 		if m.sel > 0 {
 			m.sel--
@@ -157,6 +190,17 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "t", " ":
 		m.toggleItem()
 		return m, m.load()
+	case "v":
+		if m.tab == tabTraffic {
+			for i, r := range histRanges {
+				if r == m.histRange {
+					m.histRange = histRanges[(i+1)%len(histRanges)]
+					break
+				}
+			}
+			m.hist = nil
+			return m, m.load()
+		}
 	case "u":
 		if m.tab == tabNodes && m.rows() > 0 {
 			n := m.v.Nodes[m.sel].Value
@@ -272,6 +316,8 @@ func (m *model_) rows() int {
 		return len(m.v.ExitRoutes)
 	case tabChanges:
 		return len(changeLines)
+	case tabTraffic:
+		return len(m.histRows())
 	case tabDevices:
 		return len(m.v.Tokens)
 	}
@@ -729,4 +775,33 @@ func (m *model_) exitNames(ids []string) string {
 		s = append(s, m.name(id))
 	}
 	return strings.Join(s, ", ")
+}
+
+type histRow struct{ label, key string }
+
+// histRows lists what the TRAFFIC tab shows: every forward and HTTPS site,
+// then the device links the log server has data for.
+func (m *model_) histRows() []histRow {
+	var rows []histRow
+	for _, it := range m.v.Forwards {
+		f := it.Value
+		rows = append(rows, histRow{fmt.Sprintf("%s (%s %d)", labelOr(f.Name), f.Proto, f.ListenPort), "f:" + f.ID})
+	}
+	for _, it := range m.v.Routes {
+		rows = append(rows, histRow{it.Value.Hostname, "r:" + it.Value.ID})
+	}
+	if m.hist != nil {
+		var keys []string
+		for k := range m.hist.Series {
+			if strings.HasPrefix(k, "d:") {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			peer, by, _ := strings.Cut(k[2:], "@")
+			rows = append(rows, histRow{m.name(peer) + " <-> " + m.name(by), k})
+		}
+	}
+	return rows
 }

@@ -55,6 +55,9 @@ type Service struct {
 	Runtime func() Runtime
 	// Traffic gathers live traffic from every server (nil: not available).
 	Traffic func() []traffic.Node
+	// History returns traffic history for a range ("6h", "1d", "1w", "1m",
+	// "1y") from the log server (nil: not available here).
+	History func(rng string) (any, error)
 	// Update makes node update itself to the latest release (nil: not
 	// available here).
 	Update func(node string) (string, error)
@@ -195,6 +198,27 @@ func (s *Service) PutRoute(r model.HTTPRoute, scope store.Scope) (model.HTTPRout
 }
 
 // PutACL creates or updates an access rule.
+// SetHistorySettings picks the traffic log server ("" = automatic) and the
+// retention in days.
+func (s *Service) SetHistorySettings(server string, days int) error {
+	if err := s.requireWriter(); err != nil {
+		return err
+	}
+	if server != "" {
+		n, ok := store.Get[model.Node](s.Store, model.Key(model.KindNode, server))
+		if !ok || n.Kind != model.NodeServer {
+			return errors.New("the log server must be a server node")
+		}
+	}
+	if days < 0 || days > 3650 {
+		return errors.New("keep history for 1-3650 days")
+	}
+	netw, _ := store.Get[model.Network](s.Store, model.Key(model.KindNetwork, "main"))
+	netw.LogServer, netw.LogDays = server, days
+	_, err := s.Store.Put(model.Key(model.KindNetwork, "main"), netw, store.Cluster)
+	return err
+}
+
 // PutExitRoute creates or updates an exit route. Without a router it picks
 // the server that shares a subnet containing the device.
 func (s *Service) PutExitRoute(r model.ExitRoute, scope store.Scope) (model.ExitRoute, error) {
@@ -628,6 +652,22 @@ func (s *Service) Handler(prefix string) http.Handler {
 		}
 		msg, err := s.Update(b.Node)
 		return map[string]string{"message": msg}, err
+	})
+	route("GET history", func(r *http.Request) (any, error) {
+		if s.History == nil {
+			return nil, errors.New("traffic history is not available here")
+		}
+		return s.History(r.URL.Query().Get("range"))
+	})
+	route("POST history-settings", func(r *http.Request) (any, error) {
+		var b struct {
+			LogServer string `json:"log_server"`
+			LogDays   int    `json:"log_days"`
+		}
+		if err := decode(r, &b); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, s.SetHistorySettings(b.LogServer, b.LogDays)
 	})
 	route("GET changelog", func(r *http.Request) (any, error) {
 		return map[string]string{"text": changelog.Text}, nil

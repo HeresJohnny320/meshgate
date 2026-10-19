@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -113,6 +114,12 @@ func (m *model_) listView(width int) string {
 	switch {
 	case n == 0:
 		body = []string{panel(width, quietBorder, mutedStyle.Render(m.emptyText()))}
+	case m.tab == tabTraffic:
+		rows := m.histRows()
+		start, end := window(m.sel, n, max(1, available))
+		for i := start; i < end; i++ {
+			body = append(body, line(width, m.trafficLine(rows[i], i == m.sel, width)))
+		}
 	case m.tab == tabChanges:
 		start, end := window(m.sel, n, max(1, available))
 		for i := start; i < end; i++ {
@@ -161,6 +168,15 @@ func (m *model_) tabHint() string {
 		return "LAN devices whose internet goes out through an exit node"
 	case tabChanges:
 		return "what changed in each version (+ added, - removed, ~ changed or fixed)"
+	case tabTraffic:
+		where := ""
+		if m.hist != nil {
+			where = ", stored on " + m.hist.Server
+		}
+		if m.histErr != "" {
+			where = " (" + m.histErr + ")"
+		}
+		return "traffic history, last " + m.histRange + where + "   V: change period"
 	case tabDevices:
 		return "join tokens for new servers, phones and PCs"
 	}
@@ -189,6 +205,8 @@ func (m *model_) footer(width int) string {
 	switch m.tab {
 	case tabNodes:
 		keys = append(keys, key{"E", "edit"}, key{"U", "update"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
+	case tabTraffic:
+		keys = append(keys, key{"V", "period (6h/1d/1w/1m/1y)"})
 	case tabForwards, tabHTTPS, tabRules, tabExits:
 		keys = append(keys, key{"A", "add"}, key{"E", "edit"}, key{"T", "on/off"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
 	case tabDevices:
@@ -585,4 +603,76 @@ func changeLine(l string, sel bool) string {
 		return marker + warnStyle.Render("~ ") + l[2:]
 	}
 	return marker + mutedStyle.Render(l)
+}
+
+// trafficLine: name, a sparkline of the period (in+out average), the total
+// transferred and the peak speed.
+func (m *model_) trafficLine(r histRow, sel bool, width int) string {
+	marker := "  "
+	if sel {
+		marker = selectedStyle.Render("> ")
+	}
+	var buckets [][5]float64
+	var step int64
+	if m.hist != nil {
+		buckets, step = m.hist.Series[r.key], m.hist.Step
+	}
+	cols := min(48, max(8, width-62))
+	vals := make([]float64, cols)
+	var total, peak float64
+	for _, b := range buckets {
+		total += (b[1] + b[2]) * float64(step)
+		peak = math.Max(peak, math.Max(b[3], b[4]))
+	}
+	if n := len(buckets); n > 0 {
+		for i, b := range buckets {
+			c := i * cols / n
+			vals[c] = math.Max(vals[c], b[1]+b[2])
+		}
+	}
+	label := r.label
+	if len(label) > 26 {
+		label = label[:25] + "…"
+	}
+	return marker + fmt.Sprintf("%-27s", label) + " " + addressStyle.Render(spark(vals)) +
+		fmt.Sprintf("  %9s  peak %s", humanBytes(total), humanBits(peak))
+}
+
+func spark(vals []float64) string {
+	const bars = "▁▂▃▄▅▆▇█"
+	top := 0.0
+	for _, v := range vals {
+		top = math.Max(top, v)
+	}
+	var b strings.Builder
+	for _, v := range vals {
+		if top == 0 || v == 0 {
+			b.WriteString(" ")
+			continue
+		}
+		i := int(v / top * 7.999)
+		b.WriteString(string([]rune(bars)[i]))
+	}
+	return b.String()
+}
+
+func humanBytes(n float64) string {
+	u := []string{"B", "KB", "MB", "GB", "TB"}
+	i := 0
+	for n >= 1024 && i < len(u)-1 {
+		n /= 1024
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", n, u[i])
+}
+
+func humanBits(bytesPerSec float64) string {
+	b := bytesPerSec * 8
+	u := []string{"bps", "kbps", "Mbps", "Gbps"}
+	i := 0
+	for b >= 1000 && i < len(u)-1 {
+		b /= 1000
+		i++
+	}
+	return fmt.Sprintf("%.1f %s", b, u[i])
 }

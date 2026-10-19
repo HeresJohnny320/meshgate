@@ -271,7 +271,7 @@ sudo meshgate tui
 ```
 
 Sections: `1` Nodes, `2` Forwards, `3` HTTPS, `4` Rules, `5` Exit routes,
-`6` Devices, `7` Changes (or `Tab`). Keys: `a` add, `e` edit, `t` turn on/off, `d` delete, `c` drop a
+`6` Devices, `7` Changes, `8` Traffic history (or `Tab`; `v` changes the period). Keys: `a` add, `e` edit, `t` turn on/off, `d` delete, `c` drop a
 local-only override, `w` WireGuard app config, `s` settings, `y` theme, `r`
 refresh, `q` quit.
 
@@ -407,6 +407,25 @@ forwards); the dashboard gathers every server's numbers over the mesh, so you
 see them from pfSense or the phone too. Totals count since meshgate last
 started on that server. Port-forward and rule counters come from Linux servers;
 on pfSense use *Status → Traffic Graph* and the MESHGATE rules tab for its side.
+
+### Traffic history (graphs over time)
+
+Every server averages its traffic in memory and every 5 minutes hands one
+point per series (average and peak speed, in and out) to the mesh's **log
+server**, which keeps one file per day under `/var/lib/meshgate/history`
+(past days gzip-compressed). Kept 365 days by default: about 10-30 MB a year
+for a home mesh.
+
+- **Pick the log server:** web UI → **Settings → Traffic history**: choose the
+  server (e.g. your VPS) and how many days to keep. Left on *automatic*, it's
+  the first relay. Other servers send their points to it over the mesh and
+  keep them in memory while it's unreachable (about a day's worth).
+- **View it:** web UI or app → **Traffic → History**: 6 hours, day, week,
+  month or year, for everything together, one target IP, one forward, one
+  HTTPS route or one device link. In the TUI: `8`, `v` for the period.
+
+Changing the log server starts a fresh history there; the old files stay on
+the previous server.
 
 ### Testing that everything works
 

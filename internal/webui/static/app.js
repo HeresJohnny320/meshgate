@@ -91,6 +91,7 @@ $("#tabs").addEventListener("click", (e) => {
   clearInterval(trafficTimer);
   if (b.dataset.tab === "changelog") renderChangelog().catch((err) => toast(err.message));
   if (b.dataset.tab === "traffic") {
+    loadHistory().catch((err) => { $("#hist-info").textContent = err.message; });
     refreshTraffic().catch((err) => toast(err.message));
     trafficTimer = setInterval(() => refreshTraffic().catch(() => {}), 3000);
   }
@@ -110,6 +111,90 @@ async function renderChangelog() {
     if (l.startsWith("# ") || !l.trim()) return "";
     return `<p class="hint">${code(l)}</p>`;
   }).join("");
+}
+
+// ---------- traffic history ----------
+
+let hist = null, histRange = "1d";
+const bps = (bytes) => {
+  const b = bytes * 8, u = ["bps", "kbps", "Mbps", "Gbps"];
+  const i = Math.min(3, Math.max(0, Math.floor(Math.log10(Math.max(b, 1)) / 3)));
+  return (b / 1000 ** i).toFixed(i ? 1 : 0) + " " + u[i];
+};
+
+$("#hist-range").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-r]");
+  if (!b) return;
+  histRange = b.dataset.r;
+  document.querySelectorAll("#hist-range button").forEach((x) => x.classList.toggle("active", x === b));
+  loadHistory().catch((err) => { $("#hist-info").textContent = err.message; });
+});
+$("#hist-series").addEventListener("change", drawHistory);
+
+async function loadHistory() {
+  $("#hist-info").textContent = "Loading…";
+  hist = await api("/api/history?range=" + histRange);
+  // Choices: everything, per target IP (forwards + sites to it), per forward,
+  // per site, per device link.
+  const node = (id) => view.nodes.find((n) => n.value.id === id)?.value;
+  const target = (x) => x.target_ip || node(x.target_node)?.mesh_ip || "?";
+  const opts = [["all", "Everything (all forwards and sites)"]];
+  const ips = {};
+  (view.forwards || []).forEach(({ value: f }) => (ips[target(f)] ||= []).push("f:" + f.id));
+  (view.routes || []).forEach(({ value: r }) => (ips[target(r)] ||= []).push("r:" + r.id));
+  Object.keys(ips).sort().forEach((ip) => opts.push(["ip:" + ip, "Target IP " + ip]));
+  (view.forwards || []).forEach(({ value: f }) => opts.push(["f:" + f.id, `Forward ${f.name} (${f.proto} ${f.listen_port})`]));
+  (view.routes || []).forEach(({ value: r }) => opts.push(["r:" + r.id, "Site " + r.hostname]));
+  Object.keys(hist.series || {}).filter((k) => k.startsWith("d:")).sort().forEach((k) => {
+    const [peer, by] = k.slice(2).split("@");
+    opts.push([k, `Device ${nodeName(peer)} ↔ ${nodeName(by)}`]);
+  });
+  const sel = $("#hist-series"), keep = sel.value;
+  sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  if (opts.some(([v]) => v === keep)) sel.value = keep;
+  hist.ipKeys = ips;
+  drawHistory();
+}
+
+function drawHistory() {
+  if (!hist) return;
+  const choice = $("#hist-series").value;
+  const keys = choice === "all" ? Object.keys(hist.series || {}).filter((k) => !k.startsWith("d:"))
+    : choice.startsWith("ip:") ? (hist.ipKeys[choice.slice(3)] || []) : [choice];
+  // Sum the chosen series per time step.
+  const n = Math.round((hist.to - hist.from) / hist.step);
+  const pts = Array.from({ length: n }, (_, i) => [hist.from + i * hist.step, 0, 0, 0, 0]);
+  for (const k of keys) {
+    for (const b of (hist.series || {})[k] || []) {
+      const i = Math.round((b[0] - hist.from) / hist.step);
+      if (i >= 0 && i < n) for (let j = 1; j < 5; j++) pts[i][j] += b[j];
+    }
+  }
+  const W = 800, H = 240, L = 64, B = 22, T = 10;
+  const max = Math.max(1, ...pts.map((p) => Math.max(p[3], p[4])));
+  const x = (i) => L + (i / Math.max(1, n - 1)) * (W - L - 8);
+  const y = (v) => H - B - (v / max) * (H - B - T);
+  const line = (j) => pts.map((p, i) => `${x(i).toFixed(1)},${y(p[j]).toFixed(1)}`).join(" ");
+  const fmtT = (t) => {
+    const d = new Date(t * 1000);
+    return hist.step < 3600 ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : d.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+  const grid = [0, 0.5, 1].map((f) => `<line class="axis" x1="${L}" x2="${W - 8}" y1="${y(max * f)}" y2="${y(max * f)}"/>
+    <text x="${L - 6}" y="${y(max * f) + 4}" text-anchor="end">${bps(max * f)}</text>`).join("");
+  const ticks = [0, Math.floor((n - 1) / 2), n - 1].map((i) => `<text x="${x(i)}" y="${H - 4}" text-anchor="middle">${fmtT(pts[i][0])}</text>`).join("");
+  $("#hist-chart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="traffic history">${grid}${ticks}
+    <polyline fill="none" stroke="var(--accent)" stroke-opacity=".35" stroke-dasharray="3 3" stroke-width="1.2" points="${line(3)}"/>
+    <polyline fill="none" stroke="var(--ok)" stroke-opacity=".35" stroke-dasharray="3 3" stroke-width="1.2" points="${line(4)}"/>
+    <polyline fill="none" stroke="var(--accent)" stroke-width="2" points="${line(1)}"/>
+    <polyline fill="none" stroke="var(--ok)" stroke-width="2" points="${line(2)}"/></svg>
+    <div class="hist-legend"><span><i style="background:var(--accent)"></i>to target (in)</span><span><i style="background:var(--ok)"></i>from target (out)</span>
+    <span>dashed: peaks</span></div>`;
+  const totIn = pts.reduce((s, p) => s + p[1] * hist.step, 0), totOut = pts.reduce((s, p) => s + p[2] * hist.step, 0);
+  const peak = Math.max(0, ...pts.map((p) => Math.max(p[3], p[4])));
+  $("#hist-info").textContent = keys.length
+    ? `Total ${bytes(totIn)} in / ${bytes(totOut)} out · peak ${bps(peak)} · stored on ${hist.server}`
+    : `Nothing recorded yet for this · stored on ${hist.server}`;
 }
 
 // ---------- traffic ----------
@@ -252,6 +337,12 @@ async function refresh() {
   if (cur) sel.value = cur;
   const nf = $("#network-form");
   if (document.activeElement?.form !== nf) nf.acme_email.value = view.network.acme_email || "";
+  const hf = $("#history-form");
+  if (document.activeElement?.form !== hf) {
+    hf.log_server.innerHTML = '<option value="">Automatic (first VPS relay)</option>' + servers()
+      .map((n) => `<option value="${esc(n.id)}" ${n.id === view.network.log_server ? "selected" : ""}>${esc(n.name)}</option>`).join("");
+    hf.log_days.value = view.network.log_days || "";
+  }
   renderTools();
   labelTables();
 }
@@ -737,6 +828,15 @@ function renderTools() {
     ? "<p><b>On now:</b> " + on.map((n) => `${esc(n.name)} → <code>${esc(n.mesh_ip)}:${n.test_port}</code>`).join(", ") + "</p>"
     : '<p class="hint">Off on every node.</p>';
 }
+
+$("#history-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await api("/api/history-settings", { log_server: f.get("log_server"), log_days: parseInt(f.get("log_days"), 10) || 0 });
+    toast("Saved"); refresh();
+  } catch (err) { toast(err.message); }
+});
 
 $("#network-form").addEventListener("submit", async (e) => {
   e.preventDefault();

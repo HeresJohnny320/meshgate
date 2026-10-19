@@ -71,6 +71,17 @@ fieldset.lan-exit legend { padding: 0 6px; color: var(--text); font-size: 14px; 
 .changelog .cl-del b { color: var(--bad); }
 .changelog .cl-chg b { color: var(--warn); }
 .changelog .cl-chg span { color: var(--text); }
+.hist-bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.hist-bar label { margin: 0; display: flex; gap: 8px; align-items: center; }
+.hist-bar select { width: auto; max-width: 70vw; margin: 0; }
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.seg button { background: var(--chip); color: var(--text); font-weight: 500; padding: 6px 10px; }
+.seg button.active { background: var(--accent); color: var(--accent-text); }
+#hist-chart svg { width: 100%; height: 240px; display: block; }
+#hist-chart .axis { stroke: var(--border); }
+#hist-chart text { fill: var(--muted); font-size: 11px; }
+.hist-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; margin-top: 6px; }
+.hist-legend i { display: inline-block; width: 18px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
 h2.gap { margin-top: 24px; }
 .busy { color: var(--warn); font-weight: 600; }
 .out-pre { margin-top: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }

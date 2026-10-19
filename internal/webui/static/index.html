@@ -104,7 +104,18 @@
       <section id="tab-traffic" class="hidden">
         <p class="hint">Live, refreshed every 3 seconds. Speeds are averaged over 5 seconds; totals count since meshgate
           started on the server that measures them. Port forwards and access rules are measured on Linux servers.</p>
-        <h2>By target IP</h2>
+        <h2>History</h2>
+        <div class="card hist">
+          <div class="hist-bar">
+            <div class="seg" id="hist-range">
+              <button data-r="6h">6h</button><button data-r="1d" class="active">1 day</button><button data-r="1w">1 week</button><button data-r="1m">1 month</button><button data-r="1y">1 year</button>
+            </div>
+            <label>Show <select id="hist-series"></select></label>
+          </div>
+          <div id="hist-chart"></div>
+          <p class="hint" id="hist-info"></p>
+        </div>
+        <h2 class="gap">By target IP</h2>
         <div class="table-wrap"><table id="traffic-ips"></table></div>
         <h2 class="gap">Port forwards</h2>
         <div class="table-wrap"><table id="traffic-forwards"></table></div>
@@ -161,6 +172,14 @@
           <form id="network-form" class="card">
             <h2>Network</h2>
             <label>Let's Encrypt email (needed for HTTPS routes) <input name="acme_email" type="email"></label>
+            <button type="submit">Save</button>
+          </form>
+          <form id="history-form" class="card">
+            <h2>Traffic history</h2>
+            <p class="hint">Every server sends 5-minute traffic summaries to one log server, which keeps them for the
+              graphs in Traffic → History (a year of a typical mesh is about 10-30 MB).</p>
+            <label>Log server <select name="log_server"></select></label>
+            <label>Keep for (days) <input name="log_days" type="number" min="1" max="3650" placeholder="365"></label>
             <button type="submit">Save</button>
           </form>
           <form id="admin-form" class="card">

@@ -55,6 +55,7 @@ x phone ip route add default via 198.18.3.1 # phone starts on LTE
 x phone ip link set wifi down
 
 mg() { ns=$1; shift; x "$ns" "$BIN" -config "$D/$ns/node.json" "$@"; }
+export MESHGATE_HISTORY_INTERVAL=20s # traffic history points every 20 s instead of 5 min
 api() { x "$1" curl -sf --unix-socket "$D/$1/meshgate.sock" -H 'Content-Type: application/json' "http://x/v1/$2" ${3:+-d "$3"}; }
 start() {
   ip netns exec "$1" "$BIN" -config "$D/$1/node.json" agent > "$D/$1.log" 2>&1 & echo $! > "$D/$1.pid"
@@ -375,6 +376,16 @@ check "game forward still works while locked down" "echo '$OUT4' | grep -q 'you 
 api vps forward "{\"scope\":\"cluster\",\"forward\":{\"name\":\"after-lockdown\",\"proto\":\"tcp\",\"edge_node\":\"$VPS_ID\",\"listen_port\":4100,\"target_node\":\"$HOME_ID\",\"target_port\":4100,\"enabled\":true}}" >/dev/null
 sleep 3
 check "config sync still reaches locked-down home" "api home view | grep -q after-lockdown"
+
+echo; echo "== traffic history: stored on the log server (vps), readable from any server"
+for i in 1 2 3; do x fr sh -c 'echo | nc -w3 203.0.113.10 25566' >/dev/null 2>&1; sleep 2; done
+MASQ_ID=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([f["value"]["id"] for f in v["forwards"] if f["value"]["name"]=="masq"][0])')
+sleep 45
+H=$(api home "history?range=6h")
+echo "$H" | python3 -c "import json,sys; h=json.load(sys.stdin); print('history from', h['server'], 'series:', sorted(h['series']))"
+check "history: home reads it from the log server vps" "echo '$H' | grep -q '\"server\":\"vps\"'"
+check "history: the masq forward's traffic was recorded" "echo '$H' | python3 -c \"import json,sys; h=json.load(sys.stdin); assert any(b[3] > 0 for b in h['series']['f:$MASQ_ID'])\""
+check "history: vps keeps it in its day file" "ls '$D/vps/history/' | grep -q '\.bin'"
 
 echo; echo "== remote update: vps tells home to install the latest release"
 # Fake GitHub on the "internet": release v9.9.9 is this binary plus a few

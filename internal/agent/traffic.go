@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/heresjohnny320/meshgate/internal/fw"
+	"github.com/heresjohnny320/meshgate/internal/history"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/store"
 	"github.com/heresjohnny320/meshgate/internal/traffic"
@@ -190,12 +191,18 @@ func (a *Agent) serveTraffic(w http.ResponseWriter, r *http.Request) {
 func (a *Agent) trafficLoop(ctx context.Context) {
 	t := time.NewTicker(trafficInterval)
 	defer t.Stop()
+	interval := time.Now().Truncate(history.Interval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case now := <-t.C:
 			a.readTraffic()
+			if cur := now.Truncate(history.Interval); cur.After(interval) {
+				go a.flushHistory(interval) // the 5 minutes that just ended
+				interval = cur
+			}
+			a.sampleHistory()
 		}
 	}
 }

@@ -60,6 +60,18 @@ type Network struct {
 	CIDR      string `json:"cidr"`       // e.g. 100.88.0.0/16
 	ACMEEmail string `json:"acme_email"` // for HTTPS routes (Let's Encrypt)
 	CreatedAt int64  `json:"created_at"`
+	// LogServer stores the traffic history ("" = automatic: the first relay
+	// by name, else the first server); LogDays is how long (default 365).
+	LogServer string `json:"log_server,omitempty"`
+	LogDays   int    `json:"log_days,omitempty"`
+}
+
+// HistoryDays is the traffic history retention.
+func (n Network) HistoryDays() int {
+	if n.LogDays > 0 {
+		return n.LogDays
+	}
+	return 365
 }
 
 // Prefix parses CIDR.

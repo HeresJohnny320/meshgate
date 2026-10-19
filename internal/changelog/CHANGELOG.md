@@ -6,6 +6,9 @@
 ~ Port forwards, relays and exit nodes work on Linux servers running ufw or Docker (their FORWARD policy DROP used to block them silently)
 + iptables MESHGATE chain with exact rules: each forward only on its edge node, for its own ports and protocol, removed when the forward is disabled or deleted
 + Per-server switch to keep meshgate out of iptables (Nodes → Edit)
++ Traffic history: 5-minute averages and peaks per forward, HTTPS route, target IP and device link, kept a year (Traffic → History in the dashboard and app: 6 hours to 1 year)
++ Log server setting (Settings → Traffic history): pick which server stores the history (e.g. the VPS) and how many days to keep
++ TUI: TRAFFIC tab (8) with the history, `v` changes the period
 
 ## v0.2.13 · 2026-10-17
 + Changelog in the dashboard (Changelog tab), the TUI (CHANGES tab) and the app (Updates → What's new)

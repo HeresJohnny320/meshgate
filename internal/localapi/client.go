@@ -35,6 +35,9 @@ func (c *Client) View() (ops.View, error) {
 	return v, err
 }
 
+// Get reads an operation's result, e.g. "history?range=1d".
+func (c *Client) Get(op string, out any) error { return c.do("GET", op, nil, out) }
+
 // Post calls an operation; out may be nil.
 func (c *Client) Post(op string, body, out any) error {
 	return c.do("POST", op, body, out)

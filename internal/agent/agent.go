@@ -67,7 +67,8 @@ type Agent struct {
 	testPort int
 	testStop context.CancelFunc
 	testErr  string
-	meters   meters // traffic counters (traffic.go)
+	meters   meters    // traffic counters (traffic.go)
+	hist     histState // traffic history (history.go)
 }
 
 // New prepares an agent from the node config.
@@ -88,7 +89,7 @@ func New(cfg config.Node) (*Agent, error) {
 		proxy:     &proxy.Proxy{StorageDir: cfg.CertMagicDir()},
 		startedAt: time.Now(),
 	}
-	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic, Update: a.Update}
+	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic, Update: a.Update, History: a.History}
 	return a, nil
 }
 
@@ -174,6 +175,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		mux.Handle("/", a.sync.Handler())
 		mux.HandleFunc("GET /v1/traffic", a.serveTraffic)
 		mux.HandleFunc("POST /v1/update", a.serveUpdate)
+		mux.HandleFunc("/v1/history", a.serveHistory)
 		mux.Handle("/admin/", webui.AppAPI(a.ops, func() bool {
 			s, err := a.self()
 			return err != nil || s.AppAdminOff
