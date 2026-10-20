@@ -271,7 +271,7 @@ install it, and nodes keep working when it is offline.`)
 		*adminPass = p
 	}
 	if !*mf.yes && *acme == "" {
-		*acme = ask("Email for Let's Encrypt certificates (needed for HTTPS routes, optional)", "")
+		*acme = ask("Email for Let's Encrypt certificates (optional, for notices about HTTPS routes)", "")
 	}
 
 	cfg, key, err := newNodeConfig(mf, model.NodeServer, pp)
@@ -649,7 +649,14 @@ func printNextSteps(self model.Node, cfg config.Node, a setupAnswers) {
 	}
 	if len(cfg.WebListen) > 0 {
 		wp := listenPort(cfg.WebListen[0])
-		fmt.Printf("  web UI: http://%s  (from this machine: http://127.0.0.1:%d)\n", net.JoinHostPort(self.MeshIP, strconv.Itoa(wp)), wp)
+		scheme := "https"
+		if cfg.WebPlainHTTP {
+			scheme = "http"
+		}
+		fmt.Printf("  web UI: %s://%s  (from this machine: %s://127.0.0.1:%d)\n", scheme, net.JoinHostPort(self.MeshIP, strconv.Itoa(wp)), scheme, wp)
+		if !cfg.WebPlainHTTP {
+			fmt.Println("          its certificate is self-signed: the browser asks you to accept it once")
+		}
 	}
 	if a.relay {
 		fmt.Printf("\nOpen these ports on this machine's firewall / cloud security group:\n  UDP %d (WireGuard), UDP %d (probes), TCP %d (joins)\n",

@@ -27,6 +27,9 @@ type Node struct {
 	JoinListen string `json:"join_listen,omitempty"`
 	// Web UI listeners; empty disables the web UI on this node.
 	WebListen []string `json:"web_listen,omitempty"`
+	// WebPlainHTTP serves the web UI without HTTPS (by default it uses a
+	// self-signed certificate and redirects http:// to https://).
+	WebPlainHTTP bool `json:"web_plain_http,omitempty"`
 	// Userspace forces wireguard-go even when the kernel module exists.
 	Userspace bool `json:"userspace,omitempty"`
 	// pf anchors on FreeBSD/pfSense (defaults: natrules/meshgate,
@@ -42,6 +45,10 @@ func (n Node) StatePath() string { return filepath.Join(n.DataDir, "state.json")
 // CertPath / KeyPath hold the join API's self-signed certificate.
 func (n Node) CertPath() string { return filepath.Join(n.DataDir, "join.crt") }
 func (n Node) KeyPath() string  { return filepath.Join(n.DataDir, "join.key") }
+
+// WebCertPath / WebKeyPath hold the web UI's self-signed certificate.
+func (n Node) WebCertPath() string { return filepath.Join(n.DataDir, "webui.crt") }
+func (n Node) WebKeyPath() string  { return filepath.Join(n.DataDir, "webui.key") }
 
 // CertMagicDir stores ACME certificates for HTTPS routes.
 func (n Node) CertMagicDir() string { return filepath.Join(n.DataDir, "certs") }

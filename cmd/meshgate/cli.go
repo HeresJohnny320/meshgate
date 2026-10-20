@@ -134,11 +134,12 @@ func cmdLeave(cfgPath string, args []string) error {
 // per node; the TUI works everywhere.
 func cmdWebUI(cfgPath string, args []string) error {
 	if len(args) == 0 || (args[0] != "enable" && args[0] != "disable") {
-		return fmt.Errorf("usage: meshgate webui enable [--public] | disable")
+		return fmt.Errorf("usage: meshgate webui enable [--public] [--http] | disable")
 	}
 	fs := newFlags("webui")
 	public := fs.Bool("public", false, "serve on all interfaces instead of localhost + mesh IP")
 	port := fs.Int("port", 0, "TCP port (default: 8080, or the next free one)")
+	plain := fs.Bool("http", false, "serve plain http instead of https (self-signed certificate)")
 	user := fs.String("admin-user", "admin", "admin username to create if the mesh has none")
 	pass := fs.String("admin-pass", "", "admin password to create if the mesh has none")
 	fs.Parse(args[1:])
@@ -184,6 +185,7 @@ func cmdWebUI(cfgPath string, args []string) error {
 			got = p
 		}
 		cfg.WebListen = webListen(meshIP, got, *public, true)
+		cfg.WebPlainHTTP = *plain
 		if *pass != "" {
 			if err := api.Post("admin", map[string]string{"username": *user, "password": *pass}, nil); err != nil {
 				return err

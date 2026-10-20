@@ -246,15 +246,26 @@ Runs only on the machines you chose (installer option 1 or 2, `--webui`, or
 
 | Where you are | Open |
 |---|---|
-| On that machine | `http://127.0.0.1:8080` |
-| On any device in the mesh (phone, laptop) | `http://<that node's mesh IP>:8080` (mesh IPs are shown by `meshgate status`) |
+| On that machine | `https://127.0.0.1:8080` |
+| On any device in the mesh (phone, laptop) | `https://<that node's mesh IP>:8080` (mesh IPs are shown by `meshgate status`) |
 | pfSense | *VPN → meshgate* in the pfSense GUI |
 | Android app | the **Admin** card (built into the app; works through any server) |
-| From outside the mesh, on a VPS | `ssh -L 8080:127.0.0.1:8080 you@vps`, then `http://localhost:8080` |
+| From outside the mesh, on a VPS | `ssh -L 8080:127.0.0.1:8080 you@vps`, then `https://localhost:8080` |
 
 The dashboard is not on the public internet by default. Tabs: **Nodes**,
 **Traffic**, **Port forwards**, **HTTPS**, **Access rules**, **Exit routes**, **Add devices**, **Tools**, **Settings**
-(Let's Encrypt email, admin login).
+(traffic history, Let's Encrypt email, admin login, web UI certificate).
+
+**HTTPS, set up by itself:** the web UI always uses HTTPS. Each server makes
+its own certificate for its mesh IP, localhost, its name and its LAN
+addresses (`/var/lib/meshgate/webui.crt`), and renews it a month before it
+expires or when an address changes. Old `http://` links still work: they're
+sent to `https://` on the same port. The certificate is self-signed (no public
+authority signs certificates for private and mesh IPs), so the browser warns
+the first time: accept it once. To be sure it's really your server, compare
+the SHA-256 fingerprint the browser shows with *Settings → Web UI
+certificate* (or `journalctl -u meshgate | grep fingerprint`). To serve plain
+http instead: `sudo meshgate webui enable --http`.
 
 - Turn it on or off on a server node: `sudo meshgate webui enable` /
   `sudo meshgate webui disable`.
@@ -314,9 +325,12 @@ and keeps its settings.
 ### Publish a website over HTTPS
 
 1. Point a DNS name (e.g. `jellyfin.example.com`) at your VPS IP.
-2. Set your Let's Encrypt email: web UI → **Settings** (TUI: `s`).
-3. Web UI → **HTTPS** → **New route**: hostname `jellyfin.example.com`, edge =
+2. Web UI → **HTTPS** → **New route**: hostname `jellyfin.example.com`, edge =
    VPS, target = home server, port 8096.
+
+A Let's Encrypt email is optional (web UI → **Settings**, TUI: `s`):
+certificates are issued without one; with one, Let's Encrypt can reach you
+about your account.
 
 The VPS gets the certificate, redirects HTTP to HTTPS and passes requests to
 your home server through the mesh. Needs TCP 80 and 443 open on the VPS.

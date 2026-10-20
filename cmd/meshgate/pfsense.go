@@ -73,7 +73,7 @@ func cmdPfSense(cfgPath string, args []string) error {
 			return errors.New("cannot pick an address for the web UI")
 		}
 		cfg.WebListen, changed = webListen(meshIP, port, false, true), true
-		fmt.Printf("Turning on the web UI for mesh devices (phone app Admin): http://%s:%d/\n", meshIP, port)
+		fmt.Printf("Turning on the web UI for mesh devices (phone app Admin): https://%s:%d/\n", meshIP, port)
 	}
 	if changed {
 		if err := config.Save(cfgPath, cfg); err != nil {

@@ -778,7 +778,11 @@ func (e *Engine) StatusJSON() string {
 			if port == 0 {
 				port = model.DefaultWebPort
 			}
-			st.Admin = append(st.Admin, adminLink{Name: n.Name, URL: fmt.Sprintf("http://%s:%d/", n.MeshIP, port)})
+			scheme := "http"
+			if n.WebTLS {
+				scheme = "https"
+			}
+			st.Admin = append(st.Admin, adminLink{Name: n.Name, URL: fmt.Sprintf("%s://%s:%d/", scheme, n.MeshIP, port)})
 		}
 		ps := peerStatus{ID: n.ID, Name: n.Name, Kind: string(n.Kind), MeshIP: n.MeshIP}
 		if e.prev != nil {

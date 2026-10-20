@@ -657,6 +657,8 @@ async function refresh() {
   if (cur) sel.value = cur;
   const nf = $("#network-form");
   if (document.activeElement?.form !== nf) nf.acme_email.value = view.network.acme_email || "";
+  $("#cert-card").classList.toggle("hidden", !rt.web_cert_fp);
+  $("#cert-fp").textContent = rt.web_cert_fp || "";
   const hf = $("#history-form");
   if (document.activeElement?.form !== hf) {
     hf.log_server.innerHTML = '<option value="">Automatic (first VPS relay)</option>' + servers()

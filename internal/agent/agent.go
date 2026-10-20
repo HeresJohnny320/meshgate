@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/proxy"
 	"github.com/heresjohnny320/meshgate/internal/store"
 	"github.com/heresjohnny320/meshgate/internal/syncer"
+	"github.com/heresjohnny320/meshgate/internal/webtls"
 	"github.com/heresjohnny320/meshgate/internal/webui"
 	"github.com/heresjohnny320/meshgate/internal/wg"
 )
@@ -59,7 +61,8 @@ type Agent struct {
 	lastWG    *meshcfg.Config
 	lastFW    string
 	lastFWAt  time.Time
-	lastIpt   string // iptables MESHGATE rules last applied
+	lastIpt   string       // iptables MESHGATE rules last applied
+	webCert   *webtls.Cert // web UI certificate (nil: plain http)
 	warnings  []string
 	proxyErr  string
 	startedAt time.Time
@@ -195,10 +198,38 @@ func (a *Agent) Run(ctx context.Context) error {
 		})
 	}
 	if self.Kind == model.NodeServer {
-		ui := webui.New(a.ops)
+		var ui http.Handler = webui.New(a.ops)
+		if len(a.Cfg.WebListen) > 0 && !a.Cfg.WebPlainHTTP {
+			// HTTPS with a self-signed certificate for every address the
+			// web UI answers on; http:// on the same port redirects.
+			a.webCert = &webtls.Cert{CertPath: a.Cfg.WebCertPath(), KeyPath: a.Cfg.WebKeyPath(),
+				Hosts: webtls.Hosts(a.Cfg.WebListen, self.MeshIP, strings.ToLower(self.Name))}
+			if err := a.webCert.Refresh(time.Now()); err != nil {
+				return fmt.Errorf("web UI certificate: %w", err)
+			}
+			log.Printf("web ui: https, certificate fingerprint (SHA-256) %s", a.webCert.Fingerprint())
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(12 * time.Hour):
+						if err := a.webCert.Refresh(time.Now()); err != nil {
+							log.Printf("web ui certificate: %v", err)
+						}
+					}
+				}
+			}()
+			ui = webtls.Redirect(ui)
+		}
 		for _, addr := range a.Cfg.WebListen {
 			addr := addr
-			start("web ui "+addr, func() error { return serve(ctx, addr, ui, nil) })
+			start("web ui "+addr, func() error {
+				if a.webCert != nil {
+					return serveListener(ctx, addr, ui, func(l net.Listener) net.Listener { return webtls.Listener(l, a.webCert.TLSConfig()) })
+				}
+				return serve(ctx, addr, ui, nil)
+			})
 		}
 	}
 	go a.sync.Run(ctx)
@@ -417,7 +448,8 @@ func webPort(listen []string) int {
 // on/off, and the default LAN policy).
 func (a *Agent) syncSelf(self model.Node) {
 	want, port := len(a.Cfg.WebListen) > 0, webPort(a.Cfg.WebListen)
-	if self.WebUI == want && self.WebPort == port && self.MeshPort == a.Cfg.MeshPort {
+	webTLS := want && !a.Cfg.WebPlainHTTP
+	if self.WebUI == want && self.WebPort == port && self.MeshPort == a.Cfg.MeshPort && self.WebTLS == webTLS {
 		return
 	}
 	if self.Kind != model.NodeServer {
@@ -425,7 +457,7 @@ func (a *Agent) syncSelf(self model.Node) {
 		// sync port (phones do not serve it at all).
 		return
 	}
-	self.WebUI, self.WebPort, self.MeshPort = want, port, a.Cfg.MeshPort
+	self.WebUI, self.WebPort, self.MeshPort, self.WebTLS = want, port, a.Cfg.MeshPort, webTLS
 	if _, err := a.Store.Put(model.Key(model.KindNode, self.ID), self, store.Cluster); err != nil {
 		log.Printf("update self: %v", err)
 	}
@@ -515,6 +547,9 @@ func (a *Agent) Runtime() ops.Runtime {
 	a.mu.Unlock()
 	rt := ops.Runtime{Peers: map[string]ops.PeerRuntime{}, Warnings: warnings, LastSync: a.sync.LastContact(),
 		Userspace: a.wg.Userspace, StartedAt: a.startedAt, Latest: latestRelease()}
+	if a.webCert != nil {
+		rt.WebCertFP = a.webCert.Fingerprint()
+	}
 	stats := a.wg.Stats()
 	if prev != nil {
 		rt.HomeRelay = prev.HomeRelay
@@ -557,6 +592,15 @@ func (a *Agent) serveLocal(ctx context.Context) error {
 // serve listens on addr, retrying while the address is not yet available
 // (the mesh IP appears once WireGuard is configured).
 func serve(ctx context.Context, addr string, h http.Handler, tc *tls.Config) error {
+	if tc == nil {
+		return serveListener(ctx, addr, h, nil)
+	}
+	return serveListener(ctx, addr, h, func(l net.Listener) net.Listener { return tls.NewListener(l, tc) })
+}
+
+// serveListener serves h on addr (retrying until the address is free),
+// through wrap when given.
+func serveListener(ctx context.Context, addr string, h http.Handler, wrap func(net.Listener) net.Listener) error {
 	var l net.Listener
 	var err error
 	for {
@@ -570,8 +614,8 @@ func serve(ctx context.Context, addr string, h http.Handler, tc *tls.Config) err
 		case <-time.After(2 * time.Second):
 		}
 	}
-	if tc != nil {
-		l = tls.NewListener(l, tc)
+	if wrap != nil {
+		l = wrap(l)
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); srv.Close() }()

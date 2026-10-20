@@ -106,7 +106,11 @@ sleep 12
 
 check "home moved WireGuard to 51830 and published it" "api vps view | grep -q '\"listen_port\":51830'"
 check "home endpoint uses the new port" "api vps view | grep -q '192.168.1.10:51830'"
-check "web UI answers on 8081" "x vps curl -sf -m3 http://127.0.0.1:8081/ | grep -q meshgate"
+check "web UI answers over https on 8081" "x vps curl -sfk -m3 https://127.0.0.1:8081/ | grep -q meshgate"
+check "web UI sends http:// to https://" "x vps curl -s -m3 -o /dev/null -w '%{http_code} %{redirect_url}' http://127.0.0.1:8081/ | grep -q '308 https://127.0.0.1:8081/'"
+VPS_MESH=$(api vps view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([n["value"]["mesh_ip"] for n in v["nodes"] if n["value"]["id"]==v["self_id"]][0])')
+check "web UI certificate covers the mesh IP" "echo | x vps openssl s_client -connect $VPS_MESH:8081 2>/dev/null | openssl x509 -noout -ext subjectAltName 2>/dev/null | grep -q 'IP Address:$VPS_MESH'"
+check "web UI is marked https for the app" "api vps view | python3 -c \"import json,sys; v=json.load(sys.stdin); assert [n['value'] for n in v['nodes'] if n['value']['id']==v['self_id']][0].get('web_tls')\""
 check "home moved its sync port off busy 51823 and published it" "api vps view | grep -q '\"mesh_port\":51824'"
 check "ports command reports the moved ports" "mg home ports | grep -q 'udp 51830' && mg home ports | grep -q 'udp 51832'"
 HOME_IP=$(api home view | python3 -c 'import json,sys; v=json.load(sys.stdin); print([n["value"]["mesh_ip"] for n in v["nodes"] if n["value"]["name"]=="home"][0])')

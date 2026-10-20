@@ -738,7 +738,7 @@ func (m *model_) staticForm() {
 func (m *model_) settingsForm() {
 	m.form = newForm("Network settings", func(v map[string]string) error {
 		return m.api.Post("network", map[string]string{"acme_email": v["email"]}, nil)
-	}).text("email", "Let's Encrypt email", m.v.Network.ACMEEmail, "you@example.com").init()
+	}).text("email", "Let's Encrypt email (optional)", m.v.Network.ACMEEmail, "you@example.com").init()
 }
 
 func itoa0(n int) string {

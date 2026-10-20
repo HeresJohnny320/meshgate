@@ -178,7 +178,7 @@
         <div class="grid2">
           <form id="network-form" class="card">
             <h2>Network</h2>
-            <label>Let's Encrypt email (needed for HTTPS routes) <input name="acme_email" type="email"></label>
+            <label>Let's Encrypt email (optional: only for notices about your HTTPS routes' certificates) <input name="acme_email" type="email" placeholder="none"></label>
             <button type="submit">Save</button>
           </form>
           <form id="history-form" class="card">
@@ -189,6 +189,13 @@
             <label>Keep for (days) <input name="log_days" type="number" min="1" max="3650" placeholder="365"></label>
             <button type="submit">Save</button>
           </form>
+          <div class="card hidden" id="cert-card">
+            <h2>Web UI certificate</h2>
+            <p class="hint">This server's web UI uses HTTPS with its own (self-signed) certificate, made and renewed
+              automatically for its mesh IP, localhost and LAN addresses. The browser warns once; to be sure it is
+              this server, compare the certificate's SHA-256 fingerprint in the browser with this one:</p>
+            <code class="fp" id="cert-fp"></code>
+          </div>
           <form id="admin-form" class="card">
             <h2>Admin login</h2>
             <label>Username <input name="username" required></label>

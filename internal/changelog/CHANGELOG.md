@@ -15,7 +15,10 @@
 ~ Traffic history counts exact bytes (not average speeds); downloads have bytes in, out and total per row and totals at the end
 + History logs each forward's port, protocol and target IP:port, each site's hostname with HTTPS and HTTP apart, and the node that measured it; deleted forwards stay readable
 + History graph and downloads per target IP, per public port and per node (all its links)
-
++ Web UI over HTTPS by itself: each server makes and renews its own certificate (mesh IP, localhost, name, LAN addresses); http:// links redirect to https:// on the same port
++ Settings → Web UI certificate shows its SHA-256 fingerprint to compare with the browser's; `meshgate webui enable --http` keeps plain http
+~ The Let's Encrypt email is optional: HTTPS routes get certificates without one
+~ The app's Admin links open the web UI over https
 ## v0.2.13 · 2026-10-17
 + Changelog in the dashboard (Changelog tab), the TUI (CHANGES tab) and the app (Updates → What's new)
 

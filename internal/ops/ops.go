@@ -47,6 +47,9 @@ type Runtime struct {
 	ProxyError string                 `json:"proxy_error,omitempty"`
 	// Latest is the newest meshgate release (checked every few hours).
 	Latest string `json:"latest,omitempty"`
+	// WebCertFP is the SHA-256 fingerprint of this server's web UI
+	// certificate (self-signed), to check the browser shows the same.
+	WebCertFP string `json:"web_cert_fp,omitempty"`
 }
 
 // Service implements the operations.

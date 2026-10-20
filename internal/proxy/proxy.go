@@ -181,9 +181,8 @@ func (p *Proxy) Update(ctx context.Context, routes []Route, email string) error 
 }
 
 func (p *Proxy) start(ctx context.Context, email string) error {
-	if email == "" {
-		return fmt.Errorf("set an ACME email (network settings) before adding HTTPS routes")
-	}
+	// The email is optional: Let's Encrypt issues certificates to accounts
+	// without one (it would only be used for notices about the account).
 	certmagic.Default.Storage = &certmagic.FileStorage{Path: p.StorageDir}
 	p.magic = certmagic.NewDefault()
 	p.issuer = certmagic.NewACMEIssuer(p.magic, certmagic.ACMEIssuer{

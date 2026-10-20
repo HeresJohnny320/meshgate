@@ -136,6 +136,7 @@ type Node struct {
 	JoinFP   string `json:"join_fp,omitempty"`
 	WebUI    bool   `json:"webui,omitempty"`
 	WebPort  int    `json:"web_port,omitempty"`
+	WebTLS   bool   `json:"web_tls,omitempty"`   // web UI over https
 	MeshPort int    `json:"mesh_port,omitempty"` // sync API port (default 51823)
 	// APIHash authenticates a mobile client's sync requests (sha256 of the
 	// secret handed to it at join).
