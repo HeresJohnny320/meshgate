@@ -9,7 +9,7 @@ import (
 
 func TestWantedAndSpell(t *testing.T) {
 	p := fw.Plan{
-		HostOpen: []fw.HostPort{{"udp", 51820, "wireguard"}, {"tcp", 443, "https routes"}},
+		HostOpen: []fw.HostPort{{Proto: "udp", Port: 51820, Note: "wireguard"}, {Proto: "tcp", Port: 443, Note: "https routes"}},
 		DNAT: []fw.DNAT{
 			{Name: "minecraft", Protos: []string{"tcp"}, Lo: 25565, Hi: 25565, Dst: "192.168.1.50", DstPort: 25566},
 			{Name: "valheim", Protos: []string{"udp"}, Lo: 2456, Hi: 2458, Dst: "100.88.0.5"},
