@@ -46,9 +46,12 @@ func (n Node) StatePath() string { return filepath.Join(n.DataDir, "state.json")
 func (n Node) CertPath() string { return filepath.Join(n.DataDir, "join.crt") }
 func (n Node) KeyPath() string  { return filepath.Join(n.DataDir, "join.key") }
 
-// WebCertPath / WebKeyPath hold the web UI's self-signed certificate.
-func (n Node) WebCertPath() string { return filepath.Join(n.DataDir, "webui.crt") }
-func (n Node) WebKeyPath() string  { return filepath.Join(n.DataDir, "webui.key") }
+// WebCertPath / WebKeyPath hold the web UI's certificate, signed by the
+// server's own CA in WebCACertPath / WebCAKeyPath.
+func (n Node) WebCertPath() string   { return filepath.Join(n.DataDir, "webui.crt") }
+func (n Node) WebKeyPath() string    { return filepath.Join(n.DataDir, "webui.key") }
+func (n Node) WebCACertPath() string { return filepath.Join(n.DataDir, "webui-ca.crt") }
+func (n Node) WebCAKeyPath() string  { return filepath.Join(n.DataDir, "webui-ca.key") }
 
 // CertMagicDir stores ACME certificates for HTTPS routes.
 func (n Node) CertMagicDir() string { return filepath.Join(n.DataDir, "certs") }

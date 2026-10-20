@@ -50,6 +50,9 @@ type Runtime struct {
 	// WebCertFP is the SHA-256 fingerprint of this server's web UI
 	// certificate (self-signed), to check the browser shows the same.
 	WebCertFP string `json:"web_cert_fp,omitempty"`
+	// WebCAFP is the fingerprint of the CA that signs it (installed on a
+	// device, the browser trusts the web UI without a warning).
+	WebCAFP string `json:"web_ca_fp,omitempty"`
 }
 
 // Service implements the operations.

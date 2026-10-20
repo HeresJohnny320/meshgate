@@ -34,6 +34,7 @@ Usage:
   meshgate status               show nodes and connection paths
   meshgate token [flags]        create a join token (--kind client|server)
   meshgate webui enable|disable host the web UI on this node (or stop)
+  meshgate webui ca             the web UI's CA: install it once per device, no more warnings
   meshgate pfsense install|remove  VPN > meshgate page and Firewall > Rules > MESHGATE tab (pfSense)
   meshgate diag ping|trace|tcp|udp|http <target> [port]  test connectivity from this node
   meshgate service install|uninstall  run at boot (Windows service; systemd/rc.d are set up by the installer)

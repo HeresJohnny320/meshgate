@@ -17,6 +17,9 @@
 + History graph and downloads per target IP, per public port and per node (all its links)
 + Web UI over HTTPS by itself: each server makes and renews its own certificate (mesh IP, localhost, name, LAN addresses); http:// links redirect to https:// on the same port
 + Settings → Web UI certificate shows its SHA-256 fingerprint to compare with the browser's; `meshgate webui enable --http` keeps plain http
++ Every server's web UI fingerprint travels with its node record: `meshgate status` and Settings list them all, and Settings warns when the page was opened over an address the mesh does not protect
++ Each server signs its web UI certificate with its own CA, limited to its names, its addresses and the mesh range: install it once per device (`meshgate webui ca`, or Settings → Web UI certificate) and the browser stops warning, while a man in the middle gets an error
+~ A renewed web UI certificate keeps the addresses of the old one, so an address that comes and goes no longer brings the browser warning back
 ~ The Let's Encrypt email is optional: HTTPS routes get certificates without one
 ~ The app's Admin links open the web UI over https
 ## v0.2.13 · 2026-10-17

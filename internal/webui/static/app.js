@@ -657,8 +657,26 @@ async function refresh() {
   if (cur) sel.value = cur;
   const nf = $("#network-form");
   if (document.activeElement?.form !== nf) nf.acme_email.value = view.network.acme_email || "";
-  $("#cert-card").classList.toggle("hidden", !rt.web_cert_fp);
-  $("#cert-fp").textContent = rt.web_cert_fp || "";
+  // Fingerprints come from the node records (synced over WireGuard); only a
+  // page reached over the mesh or localhost can vouch for them.
+  const fps = servers().filter((n) => n.webui && n.web_tls && (n.id === view.self_id ? rt.web_cert_fp : n.web_fp))
+    .map((n) => [n.name, n.id === view.self_id ? rt.web_cert_fp : n.web_fp]);
+  $("#cert-card").classList.toggle("hidden", !fps.length);
+  const fpBox = $("#cert-fps");
+  fpBox.replaceChildren(...fps.flatMap(([name, fp]) => {
+    const h = document.createElement("strong");
+    h.textContent = name;
+    const c = document.createElement("code");
+    c.className = "fp";
+    c.textContent = fp;
+    return [h, c];
+  }));
+  const host = location.hostname.replace(/^\[|\]$/g, "");
+  const trusted = ["localhost", "127.0.0.1", "::1", ""].includes(host) || view.nodes.some((n) => n.value.mesh_ip === host);
+  $("#cert-warn").classList.toggle("hidden", trusted || !fps.length);
+  // The download comes from this server, so only offer it when this page is.
+  $("#ca-box").classList.toggle("hidden", !rt.web_ca_fp || location.protocol !== "https:");
+  $("#ca-fp").textContent = rt.web_ca_fp || "";
   const hf = $("#history-form");
   if (document.activeElement?.form !== hf) {
     hf.log_server.innerHTML = '<option value="">Automatic (first VPS relay)</option>' + servers()

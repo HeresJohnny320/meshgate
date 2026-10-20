@@ -257,15 +257,24 @@ The dashboard is not on the public internet by default. Tabs: **Nodes**,
 (traffic history, Let's Encrypt email, admin login, web UI certificate).
 
 **HTTPS, set up by itself:** the web UI always uses HTTPS. Each server makes
-its own certificate for its mesh IP, localhost, its name and its LAN
-addresses (`/var/lib/meshgate/webui.crt`), and renews it a month before it
-expires or when an address changes. Old `http://` links still work: they're
-sent to `https://` on the same port. The certificate is self-signed (no public
-authority signs certificates for private and mesh IPs), so the browser warns
-the first time: accept it once. To be sure it's really your server, compare
-the SHA-256 fingerprint the browser shows with *Settings → Web UI
-certificate* (or `journalctl -u meshgate | grep fingerprint`). To serve plain
-http instead: `sudo meshgate webui enable --http`.
+its own small certificate authority (`/var/lib/meshgate/webui-ca.crt`) and
+uses it to sign a certificate for its mesh IP, localhost, its name and the
+addresses it listens on (`webui.crt`), renewed a month before it expires or
+when an address changes. Old `http://` links still work: they're sent to
+`https://` on the same port. No public authority signs certificates for
+private and mesh IPs, so the browser warns until you **install the server's
+CA** on the device, once: `meshgate webui ca` shows how, and *Settings → Web
+UI certificate* has a download link. After that there is no warning, and a
+man in the middle gets a hard error instead of a warning to click through.
+The CA can only vouch for that server's names and addresses and the mesh
+range, not for other websites. Before installing it, compare its fingerprint
+with `meshgate webui ca`. Without the CA installed, compare the SHA-256
+fingerprint the browser shows with `meshgate status` on a server (or
+*Settings → Web UI certificate* on a page opened over a mesh IP). Over a
+mesh IP, WireGuard already checks you're talking to your server; on LAN or
+public addresses (`--public`) the fingerprint check is what stops a man in the
+middle, so do it before typing the admin password. To serve plain http
+instead: `sudo meshgate webui enable --http`.
 
 - Turn it on or off on a server node: `sudo meshgate webui enable` /
   `sudo meshgate webui disable`.
@@ -294,6 +303,7 @@ refresh, `q` quit.
 | `meshgate tui` | the terminal UI |
 | `meshgate token [--kind server] [--uses N] [--ttl 24h]` | join token (default: one phone/laptop, valid 24 h) |
 | `meshgate webui enable \| disable` | host the dashboard on this node, or stop |
+| `meshgate webui ca [--pem] [--new]` | the dashboard's CA and how to install it (no more certificate warnings) |
 | `meshgate pfsense install \| remove` | pfSense GUI integration (VPN menu, MESHGATE rules tab) |
 | `meshgate diag myip \| ping \| trace \| tcp \| udp \| http …` | test connectivity from this node (see [Testing](#testing-that-everything-works)) |
 | `meshgate ports` | ports this node uses |

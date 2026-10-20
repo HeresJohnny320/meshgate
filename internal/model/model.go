@@ -136,7 +136,12 @@ type Node struct {
 	JoinFP   string `json:"join_fp,omitempty"`
 	WebUI    bool   `json:"webui,omitempty"`
 	WebPort  int    `json:"web_port,omitempty"`
-	WebTLS   bool   `json:"web_tls,omitempty"`   // web UI over https
+	WebTLS   bool   `json:"web_tls,omitempty"` // web UI over https
+	// WebFP is the SHA-256 fingerprint of the web UI certificate. It travels
+	// with the node record over the mesh, so other nodes can show it to
+	// check a browser's certificate against.
+	WebFP    string `json:"web_fp,omitempty"`
+	WebCAFP  string `json:"web_ca_fp,omitempty"` // the CA that signs it
 	MeshPort int    `json:"mesh_port,omitempty"` // sync API port (default 51823)
 	// APIHash authenticates a mobile client's sync requests (sha256 of the
 	// secret handed to it at join).

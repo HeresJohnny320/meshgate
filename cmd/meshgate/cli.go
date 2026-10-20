@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/localapi"
 	"github.com/heresjohnny320/meshgate/internal/model"
+	"github.com/heresjohnny320/meshgate/internal/ops"
 	"github.com/heresjohnny320/meshgate/internal/ports"
 	"github.com/heresjohnny320/meshgate/internal/probe"
 	"github.com/heresjohnny320/meshgate/internal/store"
@@ -71,10 +74,106 @@ func cmdStatus(socket string) error {
 			fmt.Printf("  %-16s %s %s:%d -> %s:%d [%s]\n", f.Name, f.Proto, names[f.EdgeNode], f.ListenPort, names[f.TargetNode], f.TargetPort, state)
 		}
 	}
+	printWebFPs(v.Nodes, v.SelfID, v.Runtime.WebCertFP, v.Runtime.WebCAFP)
 	for _, w := range v.Runtime.Warnings {
 		fmt.Println("warning:", w)
 	}
 	return nil
+}
+
+// cmdWebUICA shows this server's web UI CA and how to install it, prints it
+// (--pem), or replaces it (--new: every device must install the new one).
+func cmdWebUICA(cfgPath string, args []string) error {
+	fs := newFlags("webui ca")
+	printPEM := fs.Bool("pem", false, "print the CA certificate (PEM) to stdout")
+	renew := fs.Bool("new", false, "make a new CA (devices that installed the old one must install the new one)")
+	fs.Parse(args)
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	if *renew {
+		for _, p := range []string{cfg.WebCACertPath(), cfg.WebCAKeyPath(), cfg.WebCertPath(), cfg.WebKeyPath()} {
+			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+		if err := restartService(); err != nil {
+			return fmt.Errorf("removed the old CA, but restarting meshgate failed: %w", err)
+		}
+		fmt.Println("Made a new web UI CA. Install it on your devices again (meshgate webui ca).")
+		return nil
+	}
+	b, err := os.ReadFile(cfg.WebCACertPath())
+	if err != nil {
+		return fmt.Errorf("no web UI CA yet (it is made when the web UI starts with https): %w", err)
+	}
+	if *printPEM {
+		os.Stdout.Write(b)
+		return nil
+	}
+	blk, _ := pem.Decode(b)
+	if blk == nil {
+		return fmt.Errorf("%s: not a PEM certificate", cfg.WebCACertPath())
+	}
+	sum := sha256.Sum256(blk.Bytes)
+	fmt.Printf(`Web UI CA of this server: %s
+SHA-256 fingerprint: %s
+
+Install it once on each device you open the web UI from; the browser then
+trusts the web UI without a warning, and a man in the middle gets an error.
+It can only vouch for this server's names and addresses and the mesh range.
+
+Get it: from this file, "sudo meshgate webui ca --pem > meshgate-ca.crt", or the
+web UI (Settings -> Web UI certificate) opened over the mesh IP. Before
+installing, check its fingerprint matches the one above.
+  Windows:  double-click it -> Install Certificate -> Local Machine ->
+            "Trusted Root Certification Authorities"
+  macOS:    open it, then in Keychain Access set it to "Always Trust"
+  Linux:    sudo cp meshgate-ca.crt /usr/local/share/ca-certificates/ &&
+            sudo update-ca-certificates  (Firefox: Settings -> Certificates -> Import)
+  Android:  Settings -> Security -> Encryption & credentials -> Install a
+            certificate -> CA certificate
+  iPhone:   open it, install the profile in Settings, then turn it on in
+            General -> About -> Certificate Trust Settings
+`, cfg.WebCACertPath(), colonHex(sum[:]))
+	return nil
+}
+
+func colonHex(b []byte) string {
+	s := make([]string, len(b))
+	for i, c := range b {
+		s[i] = fmt.Sprintf("%02X", c)
+	}
+	return strings.Join(s, ":")
+}
+
+// printWebFPs lists the web UI certificate fingerprints. This output comes
+// from the local socket and the node records synced over WireGuard, so
+// unlike the web UI's own Settings page, a man in the middle on the way to
+// the browser cannot change it.
+func printWebFPs(nodes []ops.Item[model.Node], selfID, selfFP, selfCAFP string) {
+	var lines []string
+	for _, it := range nodes {
+		n := it.Value
+		fp, ca := n.WebFP, n.WebCAFP
+		if n.ID == selfID && selfFP != "" {
+			fp, ca = selfFP, selfCAFP
+		}
+		if n.WebUI && n.WebTLS && fp != "" {
+			lines = append(lines, fmt.Sprintf("  %-16s %s", n.Name, fp))
+			if ca != "" {
+				lines = append(lines, fmt.Sprintf("  %-16s %s", "  its CA", ca))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Println("\nWeb UI certificates (SHA-256; the browser must show the same; CA: see meshgate webui ca):")
+	for _, l := range lines {
+		fmt.Println(l)
+	}
 }
 
 func cmdToken(cfgPath string, args []string) error {
@@ -133,8 +232,11 @@ func cmdLeave(cfgPath string, args []string) error {
 // cmdWebUI turns the web UI on or off for this node. The web UI is optional
 // per node; the TUI works everywhere.
 func cmdWebUI(cfgPath string, args []string) error {
+	if len(args) > 0 && args[0] == "ca" {
+		return cmdWebUICA(cfgPath, args[1:])
+	}
 	if len(args) == 0 || (args[0] != "enable" && args[0] != "disable") {
-		return fmt.Errorf("usage: meshgate webui enable [--public] [--http] | disable")
+		return fmt.Errorf("usage: meshgate webui enable [--public] [--http] | disable | ca [--pem] [--new]")
 	}
 	fs := newFlags("webui")
 	public := fs.Bool("public", false, "serve on all interfaces instead of localhost + mesh IP")
@@ -202,6 +304,14 @@ func cmdWebUI(cfgPath string, args []string) error {
 		fmt.Println("Web UI disabled on this node.")
 	} else {
 		fmt.Println("Web UI enabled:", strings.Join(cfg.WebListen, ", "))
+		if *public {
+			fmt.Println("Note: on LAN or public addresses only the certificate protects the login. Prefer the")
+			fmt.Println("mesh IP (WireGuard checks the server); otherwise compare the browser's certificate")
+			fmt.Println("fingerprint with `meshgate status` before typing the admin password.")
+		}
+		if *plain {
+			fmt.Println("Note: plain http sends the admin password unencrypted on any address but the mesh IP.")
+		}
 		fmt.Println("If this mesh has no admin login yet, rerun with --admin-pass.")
 	}
 	return nil

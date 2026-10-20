@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -200,14 +201,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	if self.Kind == model.NodeServer {
 		var ui http.Handler = webui.New(a.ops)
 		if len(a.Cfg.WebListen) > 0 && !a.Cfg.WebPlainHTTP {
-			// HTTPS with a self-signed certificate for every address the
-			// web UI answers on; http:// on the same port redirects.
+			// HTTPS with a certificate from this server's own CA for every
+			// address the web UI answers on; http:// on the same port
+			// redirects.
 			a.webCert = &webtls.Cert{CertPath: a.Cfg.WebCertPath(), KeyPath: a.Cfg.WebKeyPath(),
+				CACertPath: a.Cfg.WebCACertPath(), CAKeyPath: a.Cfg.WebCAKeyPath(), Name: self.Name, Mesh: mesh,
 				Hosts: webtls.Hosts(a.Cfg.WebListen, self.MeshIP, strings.ToLower(self.Name))}
 			if err := a.webCert.Refresh(time.Now()); err != nil {
 				return fmt.Errorf("web UI certificate: %w", err)
 			}
-			log.Printf("web ui: https, certificate fingerprint (SHA-256) %s", a.webCert.Fingerprint())
+			log.Printf("web ui: https, certificate fingerprint (SHA-256) %s, CA %s", a.webCert.Fingerprint(), a.webCert.CAFingerprint())
+			a.syncSelfNow()
 			go func() {
 				for {
 					select {
@@ -217,10 +221,11 @@ func (a *Agent) Run(ctx context.Context) error {
 						if err := a.webCert.Refresh(time.Now()); err != nil {
 							log.Printf("web ui certificate: %v", err)
 						}
+						a.syncSelfNow()
 					}
 				}
 			}()
-			ui = webtls.Redirect(ui)
+			ui = webtls.Redirect(a.webCert.ServeCA(ui))
 		}
 		for _, addr := range a.Cfg.WebListen {
 			addr := addr
@@ -449,7 +454,14 @@ func webPort(listen []string) int {
 func (a *Agent) syncSelf(self model.Node) {
 	want, port := len(a.Cfg.WebListen) > 0, webPort(a.Cfg.WebListen)
 	webTLS := want && !a.Cfg.WebPlainHTTP
-	if self.WebUI == want && self.WebPort == port && self.MeshPort == a.Cfg.MeshPort && self.WebTLS == webTLS {
+	webFP, caFP := "", ""
+	switch {
+	case a.webCert != nil:
+		webFP, caFP = a.webCert.Fingerprint(), a.webCert.CAFingerprint()
+	case webTLS:
+		webFP, caFP = self.WebFP, self.WebCAFP // certificate not loaded yet: keep the last one
+	}
+	if self.WebUI == want && self.WebPort == port && self.MeshPort == a.Cfg.MeshPort && self.WebTLS == webTLS && self.WebFP == webFP && self.WebCAFP == caFP {
 		return
 	}
 	if self.Kind != model.NodeServer {
@@ -457,9 +469,16 @@ func (a *Agent) syncSelf(self model.Node) {
 		// sync port (phones do not serve it at all).
 		return
 	}
-	self.WebUI, self.WebPort, self.MeshPort, self.WebTLS = want, port, a.Cfg.MeshPort, webTLS
+	self.WebUI, self.WebPort, self.MeshPort, self.WebTLS, self.WebFP, self.WebCAFP = want, port, a.Cfg.MeshPort, webTLS, webFP, caFP
 	if _, err := a.Store.Put(model.Key(model.KindNode, self.ID), self, store.Cluster); err != nil {
 		log.Printf("update self: %v", err)
+	}
+}
+
+// syncSelfNow runs syncSelf on the current node record.
+func (a *Agent) syncSelfNow() {
+	if self, err := a.self(); err == nil && self.Kind == model.NodeServer {
+		a.syncSelf(self)
 	}
 }
 
@@ -548,7 +567,12 @@ func (a *Agent) Runtime() ops.Runtime {
 	rt := ops.Runtime{Peers: map[string]ops.PeerRuntime{}, Warnings: warnings, LastSync: a.sync.LastContact(),
 		Userspace: a.wg.Userspace, StartedAt: a.startedAt, Latest: latestRelease()}
 	if a.webCert != nil {
-		rt.WebCertFP = a.webCert.Fingerprint()
+		rt.WebCertFP, rt.WebCAFP = a.webCert.Fingerprint(), a.webCert.CAFingerprint()
+		if sk := a.webCert.Skipped(); len(sk) > 0 {
+			// Clip: the slice is shared with a.warnings.
+			rt.Warnings = append(slices.Clip(rt.Warnings), "web UI certificate leaves out "+strings.Join(sk, ", ")+
+				" (newer than this server's CA): `sudo meshgate webui ca --new`, then install the new CA")
+		}
 	}
 	stats := a.wg.Stats()
 	if prev != nil {

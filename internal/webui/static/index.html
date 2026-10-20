@@ -191,10 +191,23 @@
           </form>
           <div class="card hidden" id="cert-card">
             <h2>Web UI certificate</h2>
-            <p class="hint">This server's web UI uses HTTPS with its own (self-signed) certificate, made and renewed
-              automatically for its mesh IP, localhost and LAN addresses. The browser warns once; to be sure it is
-              this server, compare the certificate's SHA-256 fingerprint in the browser with this one:</p>
-            <code class="fp" id="cert-fp"></code>
+            <p class="hint">Each server's web UI uses HTTPS with its own (self-signed) certificate, made and renewed
+              automatically for its mesh IP, localhost and LAN addresses. The browser warns once; before accepting,
+              compare the SHA-256 fingerprint it shows with the one here. Read this list from a page you can trust:
+              one opened over a mesh IP or localhost, or <code>meshgate status</code> on a server. A page that
+              reached you through someone in the middle could show their fingerprint instead.</p>
+            <p class="busy hidden" id="cert-warn">This page was opened over an address the mesh does not protect, so
+              this list cannot prove the page is genuine. Check with <code>meshgate status</code>, or use the mesh IP.</p>
+            <div id="cert-fps"></div>
+            <div id="ca-box" class="hidden">
+              <h2 class="gap">Stop the browser warning</h2>
+              <p class="hint">Install this server's CA on each device you open the web UI from, once. The browser
+                then trusts the web UI, and a fake certificate gets an error instead of a warning. The CA can only
+                vouch for this server's names and addresses and the mesh range. Check its fingerprint first
+                (<code>meshgate webui ca</code> on the server shows it, with install steps for each system):</p>
+              <code class="fp" id="ca-fp"></code>
+              <p><a id="ca-link" href="/meshgate-ca.crt" download="meshgate-ca.crt">Download the CA certificate</a></p>
+            </div>
           </div>
           <form id="admin-form" class="card">
             <h2>Admin login</h2>
