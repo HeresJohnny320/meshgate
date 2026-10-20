@@ -170,23 +170,21 @@ else
   /usr/local/bin/meshgate init "$@" $YES < "$TTY" || die "setup failed"
 fi
 
-# Open ports on host firewalls that would otherwise block the mesh.
+# Trust the mesh interface in host firewalls. The ports meshgate needs from
+# outside (WireGuard, probes, joins, 80/443 for HTTPS routes and every port
+# forward) are opened and closed by the running agent itself, tagged
+# "meshgate: ..." (Nodes > Edit > "Open ports in ufw / firewalld").
 # (On FreeBSD/pfSense meshgate opens its ports itself in its pf anchor.)
 if [ "$OS" = FreeBSD ]; then
   :
 elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
-  say "Configuring firewalld"
+  say "Configuring firewalld (meshgate opens its ports and forwards automatically)"
   firewall-cmd -q --permanent --zone=trusted --add-interface=mg0 || true
-  /usr/local/bin/meshgate ports | while read -r proto port; do
-    firewall-cmd -q --permanent --add-port="$port/$proto" || true
-  done
   firewall-cmd -q --reload || true
 elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-  say "Configuring ufw"
-  /usr/local/bin/meshgate ports | while read -r proto port; do ufw allow "$port/$proto" >/dev/null; done
+  say "Configuring ufw (meshgate opens its ports and forwards automatically)"
   ufw allow in on mg0 >/dev/null
   ufw route allow in on mg0 >/dev/null; ufw route allow out on mg0 >/dev/null
-  say "ufw: also allow each forwarded game port, e.g. 'ufw route allow proto tcp to any port 25565'"
 fi
 
 if [ "$OS" = FreeBSD ]; then

@@ -13,6 +13,7 @@ import (
 
 	"github.com/heresjohnny320/meshgate/internal/config"
 	"github.com/heresjohnny320/meshgate/internal/fw"
+	"github.com/heresjohnny320/meshgate/internal/hostfw"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/localapi"
 	"github.com/heresjohnny320/meshgate/internal/model"
@@ -223,6 +224,7 @@ func cmdLeave(cfgPath string, args []string) error {
 	stopService()
 	wg.DestroyInterface(cfg.Iface)
 	fw.Remove()
+	hostfw.RemoveAll(cfg.HostFirewallStatePath())
 	os.RemoveAll(cfg.DataDir)
 	os.Remove(cfgPath)
 	fmt.Println("Removed. Also remove this node from the mesh in the web UI or TUI on another node.")
@@ -318,7 +320,7 @@ func cmdWebUI(cfgPath string, args []string) error {
 }
 
 // cmdPorts prints the ports this node listens on publicly, one
-// "proto port" per line (used by the installer to open host firewalls).
+// "proto port" per line.
 func cmdPorts(cfgPath string) error {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {

@@ -129,6 +129,10 @@ type Node struct {
 	// default it keeps a MESHGATE chain in iptables' FORWARD chain that lets
 	// this node's port forwards, relaying and exit traffic past ufw/Docker.
 	IptablesOff bool `json:"iptables_off,omitempty"`
+	// HostFirewallOff: meshgate leaves ufw/firewalld alone on this node
+	// (Linux). By default it opens there what the node needs from outside:
+	// its own ports, 80/443 on an HTTPS edge and its port forwards.
+	HostFirewallOff bool `json:"host_firewall_off,omitempty"`
 	// TestPort runs meshgate's test service on this TCP+UDP port (0 = off).
 	TestPort int `json:"test_port,omitempty"`
 	// JoinAddr/JoinFP let other devices join through this node.

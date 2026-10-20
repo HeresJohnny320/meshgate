@@ -1,0 +1,243 @@
+What if your friends could join the Minecraft server running in your bedroom, and you could stream your Jellyfin library from anywhere, with a real H T T P S padlock, and you never opened a single port on your home router? That's exactly what we're setting up today.
+
+This is Mesh Gate. It connects all your machines, like a cheap VPS, your home server or P F Sense router, your phone, your laptop, and your Windows PCs, into one private WireGuard network. Your home server connects out to the VPS, so nothing at home is exposed to the internet.
+
+Then Mesh Gate lets you share game servers through the VPS, publish websites over H T T P S with free Let's Encrypt certificates, a bit like Cloudflare Tunnels, reach your home network from your phone, and control exactly who can reach what.
+
+It's one program. It sets up WireGuard for you, picks the fastest path for every connection, and gives you a web dashboard, a terminal interface, and an Android app to manage it all.
+
+In this video, we'll install it on a VPS, and add a home server, a P F Sense router, and a phone. Then we'll do two real examples. Hosting a Minecraft server for friends, and putting Jellyfin on its own H T T P S domain. After that, we'll set up exit nodes, lock down your home network with rules on P F Sense and in Mesh Gate, test everything with the built in tools, and dig into the traffic logs. Let's go.
+
+Here's what you need.
+
+One. A cheap Linux VPS with a public IP address. The smallest plan from pretty much any provider is fine.
+
+Two. A home machine. That can be a Linux box, a Raspberry Pi, a P F Sense router, or even a Windows PC.
+
+Three. Optionally, an Android phone. On iPhone, you can use the official WireGuard app for now.
+
+And four. Only for the Jellyfin part, a domain name that you can point at your VPS.
+
+That's it. You don't need to touch your home router at all.
+
+Let's start with the VPS. S S H into your VPS and paste the install command. It's linked in the description. It downloads the latest release, sets up WireGuard, and runs Mesh Gate as a service. Bonus: running the same command again later just updates Mesh Gate, and keeps your settings.
+
+The installer asks what this machine is. This is our first machine, so we're starting a new mesh. Pick option one, to host the web dashboard here. If you'd rather stay in the terminal, option four gives you the terminal interface only. Then choose an admin password. That's your dashboard login, so make it a good one.
+
+Because this VPS has a public IP, it automatically becomes a relay. That means devices that can't reach each other directly, like your phone on mobile data and your home server, talk through it.
+
+Now, the one step people forget. Your VPS provider has its own firewall panel, and Mesh Gate can't reach that. So go into your provider's dashboard and open these ports. U D P port five one eight two zero, for WireGuard. U D P port five one eight two two, for path probes. And T C P port five one eight two one, for joining new devices.
+
+While you're there, also open T C P ports eighty and four four three, for the Jellyfin part. And T C P port two five five six five, for Minecraft.
+
+Good news if your VPS runs U F W or firewall D: you don't touch those at all. Mesh Gate opens its own ports there by itself. Later, every port forward and website you add gets opened automatically too, and closed again when you delete it.
+
+Next, let's add a Linux home server. To add a machine, you make a join token. On the VPS, run the Mesh Gate token command, with kind set to server. Server means this machine can host things and share its home network. It prints the exact command to run on your home machine. You can also do this from the dashboard, under Add Devices.
+
+Paste that command on the home server. Notice we didn't open any ports at home. The home server connects out to the VPS. Its local network is shared with the mesh, so later, your phone can reach your NAS or your virtual machines from anywhere.
+
+A token is single use, and valid for twenty four hours by default. So treat it like a password. That's why it's blurred on screen.
+
+Quick side note. Windows PCs can join too, with a PowerShell version of the same command. The dashboard shows it with your token already filled in. We'll go through every kind of device later in the video.
+
+Now run Mesh Gate status on either machine. And there they are. Both devices, their mesh IP addresses, and how they're connected.
+
+If you run P F Sense, you can put Mesh Gate right on the router instead of, or as well as, a home server. The nice thing about that is your whole home network, and all your VLANs, get shared with the mesh, and phones on your home Wi-Fi connect straight to P F Sense. And you can do the whole install from the web interface. No S S H.
+
+Step one is a prerequisite. In System, Package Manager, install the WireGuard package. You don't configure anything in it. Mesh Gate just needs the WireGuard tools that the package provides. Mesh Gate sets up all the tunnels itself.
+
+Step two. In the Mesh Gate dashboard, go to Add Devices, set the type to Server, and create a token. You get a ready made command for Linux, for P F Sense, and for Windows. Copy the P F Sense one.
+
+Step three. In P F Sense, go to Diagnostics, Command Prompt. Paste it into Execute Shell Command, and hit Execute. That installs Mesh Gate, joins the mesh, and starts it as a service.
+
+One gotcha. If you set up your VPS with the terminal only option, so your mesh has no dashboard login yet, add the admin password option and a password to the end of that command.
+
+Refresh the page, and you get two new things. Under the VPN menu, there's a Mesh Gate page. That's the full Mesh Gate dashboard, built right into P F Sense, behind your normal P F Sense login. And under Firewall, Rules, there's a new Mesh Gate tab. That's where you decide what mesh devices can reach on your network. It starts with one rule that allows everything, and we'll lock that down later in the video.
+
+Your home network and VLANs are shared automatically, but never your WAN. And the dashboard is also reachable from mesh devices at P F Sense's mesh IP, so the Admin button in the phone app works through your router too.
+
+Two extras. If you prefer S S H, pick option eight in the P F Sense console and run the same command, and it asks its questions interactively. And if P F Sense is your very first machine, there's an init command that starts a brand new mesh with the dashboard on P F Sense. It's in the readme.
+
+Now the phone. Download the Mesh Gate Android app from the latest GitHub release, and install it. Android will ask you to allow installs from your browser.
+
+In the dashboard, go to Add Devices, and pick Phone or Laptop. You'll get a QR code. In the app, tap Scan QR Code, then Join, then turn on the switch.
+
+And you can just leave it on all the time. At home, the phone talks to your home network directly, with no detour. On mobile data or cafe Wi-Fi, it goes through the VPS, so your home addresses work as if you were home.
+
+Let's open the dashboard. It's not on the public internet by default, which is a good thing. From your PC, the easy way is an S S H tunnel to the VPS, then open localhost, port eighty eighty, in your browser. Or, from any device that's already in the mesh, like your phone, use the VPS's mesh IP, on port eighty eighty. On Android, just tap the Admin card in the app.
+
+The dashboard always uses H T T P S. Your browser will warn you the first time, because it's a private certificate. To get rid of that warning for good, install the server's certificate authority once. The download is under Settings, Web U I Certificate.
+
+Log in with the admin password you chose. Here are the tabs.
+
+Nodes shows every device, its mesh IP, its version, and whether it's connected directly or through a relay.
+
+Traffic shows live speeds and history graphs.
+
+Port Forwards is where you share game servers.
+
+H T T P S is where you publish websites, with automatic certificates.
+
+Access Rules decide which devices can reach what at home.
+
+Exit Routes send your home devices' internet traffic through a VPS.
+
+Add Devices makes join tokens and QR codes.
+
+Tools has built in ping, port, and web tests.
+
+And Settings has your admin login, your Let's Encrypt email, and traffic history options.
+
+Here's the cool part. Every server keeps a full copy of the configuration, and syncs it over the mesh. So if the machine hosting the dashboard goes offline, your mesh keeps working, and you can still make changes from any other server.
+
+And if you live in the terminal, the Mesh Gate T U I gives you all the same settings, with keyboard shortcuts. Everything I do in the dashboard today, you can also do there.
+
+Example one. Hosting a Minecraft server.
+
+I've got a regular Minecraft Java server running on my home server, on the default port, two five five six five. Right now, only people on my home Wi-Fi can join. Let's fix that, without touching my router.
+
+In the dashboard, go to Port Forwards, and click New Forward. The edge is where your friends connect, so pick the VPS. Protocol T C P, port two five five six five. For the target, pick the home server, port two five five six five. The target can also be any device on your home network, like a virtual machine.
+
+Then there's an option called Show Players' Real IPs. Turn that on, so your server sees each player's real address, instead of everyone coming from the VPS. That matters for bans and whitelists. It works when the Minecraft server runs on the target machine itself, and Docker on that machine is fine too.
+
+Hit save. By default, the change goes to all nodes, so the whole mesh picks it up within seconds.
+
+And if your VPS runs U F W, check this out. Run U F W status, and Mesh Gate has already added a rule for the forward, labelled Mesh Gate forward Minecraft. You didn't type a single firewall command. Switch the forward off or delete it, and the rule disappears too. On firewall D, it's the same. Rules you made yourself are never touched. And if you'd rather manage the firewall by hand, there's a switch for that under Nodes, Edit.
+
+Before we call our friends, let's check it. On the VPS, the Mesh Gate diag T C P command, with the server's address and port, tells us whether Minecraft answers through the mesh. Open. Good. You can run the same check from the Tools tab in the dashboard.
+
+Now in Minecraft, add a server, using the VPS's public IP address. Since we're on the default port, you don't even need to type the port number. And we're in! My friend is connecting to the VPS, and the VPS passes the traffic down the encrypted tunnel to my house. Nothing at home is exposed.
+
+And look at the server console. Because we turned on real IPs, it shows the player's actual address, not the VPS.
+
+If you want to close the server for the night, just switch the forward off. The port closes, and your settings are kept for next time.
+
+Quick tip for other games. Minecraft Bedrock uses U D P port one nine one three two. And port ranges work too. So Valheim is U D P ports two four five six through two four five eight. Same steps. And remember to open the same ports in your VPS provider's firewall panel.
+
+Example two. Jellyfin over H T T P S.
+
+Jellyfin is running on my home server, on its default port, eight zero nine six. Right now, it's plain H T T P, and it only works at home. I want it at a proper address, like jellyfin dot example dot com, with a real padlock, that works from anywhere. This is basically a self hosted Cloudflare Tunnel.
+
+Step one, D N S. At your domain provider, add an A record for jellyfin, pointing at your VPS's public IP address. It can take a few minutes to update.
+
+Step two. In the dashboard, open the H T T P S tab, and click New Route. Set the hostname to jellyfin dot example dot com. The edge is the VPS. The target is the home server, port eight zero nine six. Save.
+
+That's really it. The VPS automatically gets a free Let's Encrypt certificate, redirects plain H T T P to H T T P S, and passes every request down the mesh to your home server. Just make sure T C P ports eighty and four four three are open in your VPS provider's firewall, like we did at the start. U F W or firewall D on the VPS itself are handled for you. Mesh Gate opens eighty and four four three there as soon as the route exists.
+
+Optionally, add an email address under Settings. Certificates work without one, but with one, Let's Encrypt can contact you about your account.
+
+Now, the moment of truth. I'm on my phone, with Wi-Fi off, on mobile data. Jellyfin dot example dot com. And there's the padlock. And it streams. The Jellyfin apps work with this address too, on TVs, phones, and tablets.
+
+If you want to double check, the Mesh Gate diag H T T P command, with your address, shows the status, the timing, and the certificate's issuer and expiry date.
+
+And in the Traffic tab, you can watch it live. Requests per minute, errors, speed, and the most recent requests, including the visitor's IP, the page they opened, and the status.
+
+One Jellyfin tip. If Jellyfin shows the VPS as every visitor's IP, go to Jellyfin's Networking settings, and add the VPS's mesh IP under Known Proxies. Then Jellyfin trusts the real visitor address that Mesh Gate passes along.
+
+This works for any web app. Nextcloud, Home Assistant, Immich, whatever you run. Each one is just another H T T P S route, with its own hostname and port.
+
+We've added a few devices already, so let's look at the Add Devices tab properly. There are two cards. Join Token is for anything running Mesh Gate. Official WireGuard App is for everything else.
+
+First, the device type. A client is a phone or laptop that just connects. A server is a VPS, a home box, or P F Sense: something that hosts things or shares a network. Then Uses, which is how many devices can join with this one token. And Valid For, in hours. The default is one device within twenty four hours, which is the safe choice. And a note, so you remember who it was for.
+
+For a client token, you get a QR code for the phone app, plus copy and paste commands for a Linux laptop and for a Windows PC. For a server token, like we saw with P F Sense, you get commands for Linux, P F Sense, and Windows.
+
+On Windows, open PowerShell as Administrator and paste. It installs Mesh Gate as a Windows service and adds the firewall rule. A Windows PC can be a client, or a server that hosts a game behind a VPS port forward. It can't share its home network though. Use Linux or P F Sense for that.
+
+Every token you've made shows up in a table, with how many uses are left, and when it expires. Delete one there, and it stops working right away.
+
+Now the other card. For an iPhone, a Mac, or a router that can't run Mesh Gate, use Official WireGuard App. Give it a name, pick a relay, and you get a QR code and a config file. The private key is only shown once, so scan it right away. These devices always go through the relay you picked, and they don't switch paths automatically like the Mesh Gate app does.
+
+And to remove a device, go to Nodes and click Remove, then uninstall Mesh Gate on that device. Lost your phone? Remove it there, and it's out of your network.
+
+Next, exit nodes. Normally, the mesh only carries traffic for your own stuff. Your home network, your game servers, your other devices. Your regular browsing still goes straight out through whatever Wi-Fi you're on. An exit node changes that. It sends a device's internet traffic out through one of your servers, so websites see your VPS's IP, instead of the cafe's or the hotel's network. It's basically your own personal VPN, on a VPS you control.
+
+Turning it on takes two clicks. In Nodes, edit the VPS and tick Exit Node.
+
+Then edit the phone, and set internet traffic away from home to go through the VPS. The app now shows Internet, through VPS. At home, the phone still uses your own connection, and your home network stays reachable everywhere.
+
+To prove it, open Tests in the app, and run My Public IP. It shows the IP that websites see, and tells you it's your exit node.
+
+If you have more than one VPS, each device can use a different one. Under May Use Exit Nodes, you choose which exits a device is allowed to use, or any exit node, including ones you add later. The exit nodes actually enforce this, so a device can't sneak through one it isn't allowed to use. And if its exit goes down, the phone moves to another allowed exit within seconds.
+
+What if no exit is reachable? That's the Exit Only setting. When it's off, which is the default, the phone falls back to its own connection. When it's on, it blocks internet until an exit comes back. The app also has a kill switch you flip yourself, which does the same thing. And for the strictest setup, turn on Android's Always On VPN, and Block Connections Without VPN. The app has a shortcut for that.
+
+And here's a cool one. Exit routes. They send devices behind your router that don't run Mesh Gate, like a virtual machine, a console, or a whole VLAN, out through an exit node. Go to Exit Routes, add a route with the device's IP or subnet, and pick the exit node. Mesh Gate picks the right router automatically. That device's internet now leaves through the VPS, while everything else on your network uses your normal connection.
+
+A few things to know. Exit nodes work in the Android app. Linux and Windows clients don't use them yet. Exit traffic only goes to the internet, never into the exit node's own private networks. And all that browsing uses your VPS's bandwidth.
+
+Right now, any device in the mesh can reach your whole home network. That's convenient, but you probably don't want your friend's laptop poking at your NAS. So let's lock it down. How you do that depends on what's sharing your network. P F Sense, or a Linux server.
+
+Every node that shares a network has a LAN policy. Open means everyone in the mesh can get in. That's the default on Linux. Restricted means only the access rules you add in Mesh Gate. And Firewall means the router's own firewall decides, which is what P F Sense uses.
+
+On P F Sense, you use the firewall you already know. Go to Firewall, Rules, and open the Mesh Gate tab. It starts with one rule that allows everything.
+
+Replace it with rules for exactly what you want. Each device shows up with its own mesh IP as the source, so you can write rules for one single device. For example, only my phone can reach my first virtual machine, on port four four three. And anyone in the mesh can S S H into my second virtual machine. Then remove the allow everything rule, and apply. Anything without a rule is blocked.
+
+You don't need rules for your port forwards or H T T P S routes. Mesh Gate keeps those working on its own.
+
+On a Linux home server, Mesh Gate does the firewalling itself. In Nodes, edit the home server, and set the LAN policy to Restricted. Now nothing gets in until you allow it.
+
+Then go to Access Rules. Each rule says which devices, to which host, subnet, VLAN, or the node itself, and which protocol and ports. For example. My laptop can reach the NAS on port four four five for file shares, and nothing else. Everyone can use D N S on the smart home VLAN. And my phone can ping the home server.
+
+Each device can see its own permissions in the app, under Your Access. And in the Traffic tab, you can see how many connections each rule has let through. We'll get to that in a couple of minutes.
+
+When something doesn't work, the hardest part is figuring out which piece is broken. Is it the forward? The game server? The firewall? Mesh Gate has a built in test kit for exactly that.
+
+First, the test service. Edit any server, and set a test service port, say eight zero nine nine. That node now answers on T C P and U D P port eight zero nine nine, and tells you which node answered, and which address you came from. It's a fake game server for testing, before you set up the real one.
+
+Forward a VPS port to it, then open the VPS's IP and that port from your phone, on mobile data, with the tunnel off. If you see the answer, the whole path works. VPS, firewall, mesh, home server. With Show Players' Real IPs on, it even shows your real address. You can point an H T T P S route at it the same way. When you're done, clear the field to turn it off.
+
+Next to it is Run a Check. Pick a check, then use Quick Pick, which lists your mesh devices, your servers' public addresses, both ends of every port forward, and your websites. Pick one, and it fills in the target and port for you. Or just type any address. The check runs from the server that's serving the dashboard.
+
+Here are the checks. My Public IP shows the IP that websites see. Ping shows whether something is reachable, and how fast. Traceroute shows every hop on the way. T C P Port Open tells you whether something answers on a port. U D P Answer gets a reply from a Mesh Gate test service. And H T T P shows a web page's status, timing, and certificate details.
+
+Each check has a command line version too, so you can run them over S S H. We already used the T C P check for Minecraft, and the H T T P check for Jellyfin.
+
+And the phone app has its own Tests screen. Those run from the phone, through the tunnel. That's perfect for checking what your phone can actually reach when you're out and about. The public IP check even tells you whether you're going through your exit node.
+
+The Traffic tab shows what's happening right now, refreshed every three seconds. It's broken down a few ways.
+
+By Target IP adds up everything going to the same machine. So if my home server runs Minecraft and Valheim, I see them together, and I know which box is busy. Then there's traffic per port forward, per website with the most recent requests, per device, and even how many connections each access rule has allowed. It's all gathered over the mesh, so you see the same numbers from P F Sense or the phone app.
+
+Now, the history. Every server counts the exact bytes of everything it handles, and every five minutes, it sends one data point to the mesh's log server. You can look back from six hours, up to a whole year. For everything together, or one target IP, one public port, one node, one forward, one website, or one device. Hover over the graph, or tap it on your phone, to see exact speeds, and how much was sent at any point.
+
+The history keeps labels too. So if you delete a forward, its old traffic still shows up, marked as deleted, with its port and target.
+
+Under Settings, Traffic History, you choose which server stores the logs, like your VPS, and how many days to keep. The default is three hundred sixty five days, which is only about ten to forty megabytes a year for a home setup. The logs are stored as one file per day, and older days are compressed. If you switch the log server, Mesh Gate moves the history over to the new one by itself.
+
+And you can download it. Any days you like, from five minute up to daily detail, as a C S V file for Excel or Sheets, as JSON, or as a plain text table. Every row has the exact bytes in and out, with totals at the end. Handy if your VPS has a bandwidth cap.
+
+Terminal fans. Press eight in the T U I for the same history graphs.
+
+Keeping everything up to date is easy. The Nodes tab shows every device's version, and marks the outdated ones. Click Update on one node, or Update All, and every server and Linux or Windows PC updates itself remotely. Only official releases are installed, and each one is checked against its published checksums first.
+
+Phones get an Updates card in the app. Android always asks you to confirm the install, so phones can't be updated remotely. And on any machine, the Mesh Gate update command does the same from the command line.
+
+Want to know what changed? The dashboard's Changelog tab, the T U I's Changes tab, and What's New in the app all show the changes in the version you're running.
+
+Everything we covered, and a lot more, is on GitHub. Mesh Gate is open source, under the M I T license. The readme on the front page is the full manual.
+
+The Install section has the exact steps for every platform. Common Tasks covers everything from today. Troubleshooting has a table of common problems and fixes. And Advanced explains how it works under the hood, every port it uses, and how the firewall rules are built.
+
+On the right is Releases. That's where every download lives. The Linux, P F Sense, and Windows builds, the Android app, and a checksums file. And because it's all open source, you can read the install scripts in the scripts folder before you run anything. That's always a good habit when you're piping a script into your shell.
+
+Something not working? Here are the common fixes.
+
+If friends can't connect, nine times out of ten, it's your VPS provider's firewall panel. Open the port there, and run the Mesh Gate diag T C P command on the VPS to test it. U F W or firewall D on the VPS itself is not the problem. Mesh Gate opens the port there automatically, and you can see the rule with U F W status.
+
+If a device won't join, the token is probably used up or expired. Just make a new one. Also check that T C P port five one eight two one is open on the VPS.
+
+If a device says via relay instead of direct, don't worry. That's normal when you're away from home.
+
+Forgot your dashboard password? There's a one line command to reset it. It's in the description.
+
+On P F Sense, if the Mesh Gate page is missing from the VPN menu, one command puts it back.
+
+And if anything else is weird, check the logs. Journal control on Linux, or the Mesh Gate log file on P F Sense.
+
+And that's Mesh Gate. We built a private network between a VPS, a home server, a P F Sense router, and a phone. We shared a Minecraft server with friends, and put Jellyfin on its own H T T P S domain, without opening a single port at home. Then we turned the VPS into our own VPN with exit nodes, locked down the home network with rules, tested everything with the built in tools, and looked at where all the bandwidth goes.
+
+Everything is on GitHub, linked in the description, along with the install command, and the full readme.
+
+If this helped, leave a like and subscribe. And tell me in the comments what you're going to host first. See you in the next one.

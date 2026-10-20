@@ -105,8 +105,10 @@ curl -fsSL https://raw.githubusercontent.com/heresjohnny320/meshgate/main/script
 - A VPS with a public IP automatically becomes a **relay**: devices that cannot
   reach each other directly (your phone on mobile data and your home server)
   talk through it.
-- Open these in your **VPS provider's firewall / security group** (the installer
-  handles ufw and firewalld on the VPS itself, but not your provider's panel):
+- Open these in your **VPS provider's firewall / security group**. ufw and
+  firewalld on the VPS itself are handled automatically (meshgate opens its
+  ports, 80/443 for HTTPS routes and each port forward there, and closes them
+  again when you delete one), but your provider's panel is not:
 
   | Port | Why |
   |---|---|
@@ -612,7 +614,7 @@ Then remove the device from the mesh in the web UI or TUI of another node.
 |---|---|
 | A device shows `via <relay>` instead of `direct` | Normal when it's away from home or behind NAT. Forward UDP 51820 and 51822 on your router for direct connections from outside. |
 | Join fails / times out | The token may be used up or expired: make a new one. On the VPS, check TCP 51821 is open in your provider's firewall. |
-| Friends can't connect to a forward | Open the port in your VPS provider's firewall and check the forward is on. ufw and Docker are handled automatically: each Linux server keeps a `MESHGATE` chain in iptables' FORWARD chain with exactly its own forwards (its ports and protocol, gone when you disable the forward), relaying and exit traffic; `sudo iptables -S MESHGATE` shows it, and **Nodes → Edit** can switch it off per server. `sudo meshgate diag tcp <target IP> <port>` on the VPS tells you whether the game server answers through the mesh. |
+| Friends can't connect to a forward | Open the port in your VPS provider's firewall and check the forward is on. ufw, firewalld and Docker are handled automatically: meshgate adds a `meshgate: forward <name>` rule to ufw or firewalld for each forward (`sudo ufw status` / `sudo firewall-cmd --list-ports` shows them), and each Linux server keeps a `MESHGATE` chain in iptables' FORWARD chain with exactly its own forwards (its ports and protocol, gone when you disable the forward), relaying and exit traffic; `sudo iptables -S MESHGATE` shows it, and **Nodes → Edit** can switch it off per server. `sudo meshgate diag tcp <target IP> <port>` on the VPS tells you whether the game server answers through the mesh. |
 | No **Admin** button in the phone app | Turn the tunnel on. If the card says no node hosts the web UI, run `meshgate webui enable` on one. |
 | Forgot the dashboard password | On a node with the web UI: `sudo meshgate webui enable --admin-pass 'new-password'` |
 | pfSense: "install the WireGuard package first" | *System → Package Manager* → install **WireGuard**, then rerun. |
@@ -669,9 +671,16 @@ directly:
   Your own rules, Docker's and ufw's are untouched
   (`sudo nft list table inet meshgate` shows meshgate's). Routes to shared
   subnets live in routing table 51820, selected by `ip rule`.
-- **ufw / firewalld:** they still filter traffic alongside meshgate, so the
-  installer opens meshgate's ports and allows traffic on the mesh interface
-  `mg0` in them.
+- **ufw / firewalld:** they still filter traffic alongside meshgate. The
+  installer allows traffic on the mesh interface `mg0` in them, and every
+  Linux server keeps them open for what it needs from outside: its WireGuard,
+  probe and join ports, 80 and 443 when it is an HTTPS edge, and each port
+  forward it is the edge of (ufw: a `route allow` rule to the forward's
+  target). Every rule is commented `meshgate: …`, is removed again when the
+  forward or route goes away or is switched off, and is checked every minute,
+  so a firewall you turn on later is picked up. Rules you added yourself are
+  never removed. Switch it off per server: **Nodes → Edit** → *Open ports in
+  ufw / firewalld automatically*.
 - **pfSense / FreeBSD:** pf anchors that pfSense already loads:
   `natrules/meshgate` (NAT), `tftp-proxy/meshgate` (port-forward redirects),
   `userrules/meshgate` (filter). They survive pfSense filter reloads and are

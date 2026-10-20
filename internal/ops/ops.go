@@ -390,6 +390,7 @@ type NodePatch struct {
 	ExitOnly     *bool            `json:"exit_only,omitempty"`
 	ExitsAllowed *[]string        `json:"exits_allowed,omitempty"`
 	Iptables     *bool            `json:"iptables,omitempty"`
+	HostFirewall *bool            `json:"host_firewall,omitempty"`
 }
 
 // UpdateNode edits a node.
@@ -473,6 +474,9 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.Iptables != nil {
 		n.IptablesOff = !*p.Iptables
+	}
+	if p.HostFirewall != nil {
+		n.HostFirewallOff = !*p.HostFirewall
 	}
 	if p.ExitOnly != nil {
 		n.ExitOnly = *p.ExitOnly

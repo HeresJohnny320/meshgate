@@ -1,6 +1,7 @@
 package fw
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -485,5 +486,25 @@ func iptCheck(t *testing.T, rules [][]string) {
 			t.Skipf("cannot create netns: %s", out)
 		}
 		t.Fatalf("iptables rejected the rules: %v\n%s", err, out)
+	}
+}
+
+func TestHostOpen(t *testing.T) {
+	routes := []model.HTTPRoute{{ID: "r", Hostname: "jellyfin.example.com", EdgeNode: "vps", TargetNode: "home", TargetPort: 8096, Enabled: true}}
+	i := in(vps)
+	i.Routes = routes
+	got := Build(i).HostOpen
+	want := []HostPort{{"udp", 51820, "wireguard"}, {"udp", 51822, "path probes"}, {"tcp", 51821, "joins"},
+		{"tcp", 80, "https routes"}, {"tcp", 443, "https routes"}}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("edge HostOpen = %v, want %v", got, want)
+	}
+	// The route's target is not an HTTPS edge: no 80/443.
+	i = in(home)
+	i.Routes, i.JoinPort = routes, 0
+	for _, h := range Build(i).HostOpen {
+		if h.Port == 80 || h.Port == 443 || h.Port == 51821 {
+			t.Errorf("home opens %v", h)
+		}
 	}
 }

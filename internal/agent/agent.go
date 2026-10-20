@@ -28,6 +28,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/config"
 	"github.com/heresjohnny320/meshgate/internal/diag"
 	"github.com/heresjohnny320/meshgate/internal/fw"
+	"github.com/heresjohnny320/meshgate/internal/hostfw"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/meshcfg"
 	"github.com/heresjohnny320/meshgate/internal/model"
@@ -57,16 +58,20 @@ type Agent struct {
 	proxy  *proxy.Proxy
 	ops    *ops.Service
 
-	mu        sync.Mutex
-	prev      *pathsel.Result
-	lastWG    *meshcfg.Config
-	lastFW    string
-	lastFWAt  time.Time
-	lastIpt   string       // iptables MESHGATE rules last applied
-	webCert   *webtls.Cert // web UI certificate (nil: plain http)
-	warnings  []string
-	proxyErr  string
-	startedAt time.Time
+	mu       sync.Mutex
+	prev     *pathsel.Result
+	lastWG   *meshcfg.Config
+	lastFW   string
+	lastFWAt time.Time
+	lastIpt  string // iptables MESHGATE rules last applied
+	// ufw/firewalld rules last synced, when, and the error if any.
+	lastHost   string
+	lastHostAt time.Time
+	hostErr    string
+	webCert    *webtls.Cert // web UI certificate (nil: plain http)
+	warnings   []string
+	proxyErr   string
+	startedAt  time.Time
 	// Test service (diag.Serve) currently running, and how to stop it.
 	testPort int
 	testStop context.CancelFunc
@@ -388,6 +393,19 @@ func (a *Agent) reconcile(ctx context.Context) {
 				}
 				a.lastFW, a.lastFWAt, a.lastIpt = script, time.Now(), iptKey
 			}
+		}
+		// Open what this node needs in ufw/firewalld; re-checked every
+		// minute so a firewall turned on later is picked up.
+		hostRules := hostfw.Wanted(plan)
+		if hostKey := fmt.Sprint(self.HostFirewallOff, hostRules); hostKey != a.lastHost || time.Since(a.lastHostAt) > time.Minute {
+			a.hostErr = ""
+			if _, err := hostfw.Sync(a.Cfg.HostFirewallStatePath(), hostRules, self.HostFirewallOff); err != nil {
+				a.hostErr = err.Error()
+			}
+			a.lastHost, a.lastHostAt = hostKey, time.Now()
+		}
+		if a.hostErr != "" {
+			warn = append(warn, "host firewall (ufw/firewalld): "+a.hostErr)
 		}
 		a.updateProxy(ctx, netw, nodes)
 		a.updateTest(ctx, self)

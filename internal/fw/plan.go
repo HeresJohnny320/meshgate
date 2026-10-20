@@ -68,6 +68,13 @@ type DNAT struct {
 	Preserve bool   // do not masquerade: target sees the client's IP
 }
 
+// HostPort is a port this host accepts from anywhere.
+type HostPort struct {
+	Proto string // tcp or udp
+	Port  int
+	Note  string
+}
+
 // Allow is one accepted flow from the mesh into this node or its LANs.
 type Allow struct {
 	Comment string
@@ -106,6 +113,10 @@ type Plan struct {
 	// WANOpen lists meshgate's own public ports (pf only; Linux leaves the
 	// host firewall alone).
 	WANOpen []Allow
+	// HostOpen are the ports this host itself must accept from anywhere:
+	// WireGuard, probes, joins and, on an HTTPS edge, 80 and 443. On Linux
+	// they are opened in ufw or firewalld (package hostfw).
+	HostOpen []HostPort
 	// Restricted drops everything from the mesh that Allow does not match.
 	Restricted bool
 	// Relay: this node forwards traffic between mesh devices.
@@ -283,6 +294,23 @@ func Build(in Input) Plan {
 			a.Dst = r.TargetIP + "/32"
 		}
 		p.Allow = append(p.Allow, a)
+	}
+
+	// Ports this host must accept from anywhere.
+	if in.WGPort > 0 {
+		p.HostOpen = append(p.HostOpen, HostPort{"udp", in.WGPort, "wireguard"})
+	}
+	if in.ProbePort > 0 {
+		p.HostOpen = append(p.HostOpen, HostPort{"udp", in.ProbePort, "path probes"})
+	}
+	if in.JoinPort > 0 {
+		p.HostOpen = append(p.HostOpen, HostPort{"tcp", in.JoinPort, "joins"})
+	}
+	for _, r := range in.Routes {
+		if r.Enabled && r.EdgeNode == in.Self.ID {
+			p.HostOpen = append(p.HostOpen, HostPort{"tcp", 80, "https routes"}, HostPort{"tcp", 443, "https routes"})
+			break
+		}
 	}
 
 	// meshgate's own services over the mesh.

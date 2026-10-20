@@ -43,6 +43,9 @@ type Node struct {
 func (n Node) StatePath() string { return filepath.Join(n.DataDir, "state.json") }
 
 // CertPath / KeyPath hold the join API's self-signed certificate.
+// HostFirewallStatePath lists the ufw/firewalld rules meshgate added.
+func (n Node) HostFirewallStatePath() string { return filepath.Join(n.DataDir, "hostfw.json") }
+
 func (n Node) CertPath() string { return filepath.Join(n.DataDir, "join.crt") }
 func (n Node) KeyPath() string  { return filepath.Join(n.DataDir, "join.key") }
 

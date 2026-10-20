@@ -3,6 +3,8 @@
 `+` added · `-` removed · `~` changed or fixed
 
 ## Unreleased
++ Linux servers open what they need in ufw or firewalld by themselves: meshgate's ports, 80 and 443 on an HTTPS edge, and every port forward. Rules are tagged "meshgate: ..." and removed again when the forward or route is deleted or turned off; rules you added yourself are never touched
++ Per-server switch "Open ports in ufw / firewalld automatically" (Nodes → Edit, TUI `1`, `e`)
 ~ Port forwards, relays and exit nodes work on Linux servers running ufw or Docker (their FORWARD policy DROP used to block them silently)
 + iptables MESHGATE chain with exact rules: each forward only on its edge node, for its own ports and protocol, removed when the forward is disabled or deleted
 + Per-server switch to keep meshgate out of iptables (Nodes → Edit)
