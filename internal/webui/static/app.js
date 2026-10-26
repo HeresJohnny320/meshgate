@@ -966,6 +966,8 @@ function nodeDialog(it) {
     : `<label class="full">Endpoints (host:port, one per line — public IP/DNS, LAN IP, router port-forward)
         <textarea name="endpoints" rows="3">${esc((n.endpoints || []).join("\n"))}</textarea></label>
        <label class="full">Shared LAN subnets (one per line) <textarea name="routes" rows="2">${esc((n.routes || []).join("\n"))}</textarea></label>
+       <p class="hint full"><button type="button" class="small" data-detect-routes="${esc(n.id)}">Detect subnets</button> <span id="detect-result"></span>
+         Adds LAN and VLAN subnets this node reports that are not listed yet (WAN, Docker and VPN interfaces are skipped). Save to apply.</p>
        <label class="inline full"><input type="checkbox" name="relay" ${n.relay ? "checked" : ""}> Relay (public endpoint reachable from anywhere)</label>
        <label class="inline full"><input type="checkbox" name="exit" ${n.exit ? "checked" : ""}> Exit node (devices you pick send their internet traffic out through this node)</label>
        ${(n.lan_exits || []).length ? `<fieldset class="full lan-exit"><legend>Older LAN exit list: please move these to the Exit routes tab, then clear them here</legend>
@@ -1016,6 +1018,17 @@ document.addEventListener("click", async (e) => {
   if (t.dataset.editFwd) return forwardDialog(view.forwards.find((x) => x.value.id === t.dataset.editFwd));
   if (t.dataset.editRoute) return routeDialog(view.routes.find((x) => x.value.id === t.dataset.editRoute));
   if (t.dataset.editNode) return nodeDialog(view.nodes.find((x) => x.value.id === t.dataset.editNode));
+  if (t.dataset.detectRoutes) {
+    const ta = t.closest("form").querySelector('textarea[name="routes"]');
+    const have = ta.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    const found = (view.statuses?.[t.dataset.detectRoutes]?.lans || [])
+      .filter((l) => !/^(docker|br-|veth|virbr|cni|flannel|cali|lxc)/.test(l.iface)).map((l) => l.cidr)
+      .filter((c, i, all) => !have.includes(c) && all.indexOf(c) === i);
+    if (found.length) ta.value = [...have, ...found].join("\n");
+    ta.rows = Math.max(2, have.length + found.length);
+    $("#detect-result").textContent = (found.length ? "Added " + found.join(", ") : view.statuses?.[t.dataset.detectRoutes]?.lans ? "No new subnets found" : "This node has not reported its networks yet") + ".";
+    return;
+  }
   if (t.dataset.update || t.id === "update-all") {
     const latest = view.runtime?.latest || "";
     const ids = t.dataset.update ? [t.dataset.update] : view.nodes.filter(({ value: n }) => {
