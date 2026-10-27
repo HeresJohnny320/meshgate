@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/heresjohnny320/meshgate/internal/agent"
@@ -38,6 +39,7 @@ Usage:
   meshgate pfsense install|remove  VPN > meshgate page and Firewall > Rules > MESHGATE tab (pfSense)
   meshgate diag ping|trace|tcp|udp|http <target> [port]  test connectivity from this node
   meshgate service install|uninstall  run at boot (Windows service; systemd/rc.d are set up by the installer)
+  meshgate start|stop|restart   turn meshgate on or off; it stays that way after reboots
   meshgate leave                stop and remove meshgate config from this machine
   meshgate update [--check]     install the latest release (checksum-verified) and restart
   meshgate version
@@ -84,6 +86,8 @@ func main() {
 		err = cmdUpdate(rest)
 	case "service":
 		err = cmdService(cfgPath, rest)
+	case "start", "stop", "restart":
+		err = cmdStartStop(cmd)
 	case "ports":
 		err = cmdPorts(cfgPath)
 	case "version", "--version", "-v":
@@ -98,6 +102,42 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// cmdStartStop turns the service on or off for good (boot included).
+func cmdStartStop(cmd string) error {
+	if err := needRoot("meshgate " + cmd); err != nil {
+		return err
+	}
+	switch cmd {
+	case "stop":
+		if err := setService(false); err != nil {
+			return err
+		}
+		fmt.Println("meshgate stopped; it stays off after reboots until `meshgate start`.")
+	case "start":
+		if err := setService(true); err != nil {
+			return err
+		}
+		fmt.Println("meshgate started; it starts at boot again.")
+	default:
+		if err := setService(true); err != nil {
+			return err
+		}
+		if err := restartService(); err != nil {
+			return fmt.Errorf("restart: %w", err)
+		}
+		fmt.Println("meshgate restarted.")
+	}
+	return nil
+}
+
+// needRoot fails early on Linux/FreeBSD when not run as root.
+func needRoot(what string) error {
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		return fmt.Errorf("%s needs root: sudo %s", what, what)
+	}
+	return nil
 }
 
 func cmdAgent(cfgPath string) error {

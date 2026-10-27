@@ -41,8 +41,8 @@ func cmdUpdate(args []string) error {
 		return err
 	}
 	if runtime.GOOS != "windows" {
-		if os.Geteuid() != 0 {
-			return fmt.Errorf("updating replaces the binary and restarts the service: run it as root (sudo meshgate update)")
+		if err := needRoot("meshgate update"); err != nil {
+			return err
 		}
 		if exe != "/usr/local/bin/meshgate" {
 			fmt.Printf("note: updating %s, but the service runs /usr/local/bin/meshgate\n", exe)

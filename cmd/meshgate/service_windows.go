@@ -111,6 +111,9 @@ func restartService() error {
 		return err
 	}
 	defer s.Close()
+	if st, err := s.Query(); err == nil && st.State == svc.Stopped {
+		return nil // stopped stays stopped
+	}
 	s.Control(svc.Stop)
 	for i := 0; i < 50; i++ {
 		if st, err := s.Query(); err == nil && st.State == svc.Stopped {
@@ -119,6 +122,40 @@ func restartService() error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return s.Start()
+}
+
+// setService starts or stops meshgate and makes that survive reboots
+// (automatic vs manual start).
+func setService(on bool) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("service manager (run as Administrator): %w", err)
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(serviceName)
+	if err != nil {
+		return fmt.Errorf("meshgate service not installed (meshgate service install): %w", err)
+	}
+	defer s.Close()
+	c, err := s.Config()
+	if err != nil {
+		return err
+	}
+	c.StartType = mgr.StartManual
+	if on {
+		c.StartType = mgr.StartAutomatic
+	}
+	if err := s.UpdateConfig(c); err != nil {
+		return err
+	}
+	if on {
+		if st, err := s.Query(); err == nil && st.State == svc.Running {
+			return nil
+		}
+		return s.Start()
+	}
+	s.Control(svc.Stop)
+	return nil
 }
 
 func stopService() {
