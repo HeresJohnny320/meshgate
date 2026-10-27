@@ -292,10 +292,22 @@ On every server node:
 sudo meshgate tui
 ```
 
-Sections: `1` Nodes, `2` Forwards, `3` HTTPS, `4` Rules, `5` Exit routes,
-`6` Devices, `7` Changes, `8` Traffic history (or `Tab`; `v` changes the period). Keys: `a` add, `e` edit, `t` turn on/off, `d` delete, `c` drop a
-local-only override, `w` WireGuard app config, `s` settings, `y` theme, `r`
-refresh, `q` quit.
+The TUI can do everything the web UI can. Sections: `1` Nodes, `2` Forwards,
+`3` HTTPS, `4` Rules, `5` Exit routes, `6` Devices, `7` Traffic, `8` Tools,
+`9` Settings, `0` Changes (or `Tab`). Keys: `a` add, `e`/`Enter` edit or run,
+`t` turn on/off, `d` delete, `c` drop a local-only override, `w` WireGuard app
+config, `s` Let's Encrypt email, `y` theme, `r` refresh, `q` quit.
+
+- **Nodes:** `u` updates the selected node, `Ctrl+U` every node behind the
+  latest release. Editing a server offers the LAN/VLAN subnets it has that
+  are not shared yet.
+- **Traffic:** live speeds and totals per monitor, target IP, forward, site,
+  device and rule, plus recent HTTPS requests; `a` adds a monitor. `m`
+  switches to history (`v` changes the period, `o` saves it as CSV).
+- **Tools:** ping, traceroute, TCP/UDP port, HTTP and "my public IP" checks
+  from this node, with quick picks for devices, forwards and sites.
+- **Settings:** traffic history storage, the web UI admin login and the web
+  UI certificate fingerprints.
 
 ### Commands
 

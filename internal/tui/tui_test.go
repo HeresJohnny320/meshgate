@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/heresjohnny320/meshgate/internal/diag"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/ops"
 )
@@ -54,5 +55,92 @@ func TestViewsRender(t *testing.T) {
 	}
 	if m.form != nil {
 		t.Fatal("esc did not close the form")
+	}
+}
+
+func TestParityTabs(t *testing.T) {
+	m := &model_{theme: "default", v: ops.View{
+		SelfID: "a",
+		Nodes: []ops.Item[model.Node]{
+			{Value: model.Node{ID: "a", Name: "vps", Kind: model.NodeServer, MeshIP: "100.88.0.1"}},
+			{Value: model.Node{ID: "b", Name: "home", Kind: model.NodeServer, MeshIP: "100.88.0.2", Routes: []string{"192.168.1.0/24"}}},
+		},
+		Monitors: []ops.Item[model.Monitor]{{Value: model.Monitor{ID: "m", Name: "survival", Node: "a", IP: "192.168.1.51", Ports: "25566", Proto: "tcp"}}},
+		Statuses: map[string]model.Status{"b": {LANs: []model.LAN{{Iface: "igb1", CIDR: "192.168.1.0/24"}, {Iface: "igb1.90", CIDR: "192.168.90.0/24"}, {Iface: "docker0", CIDR: "172.17.0.0/16"}}}},
+	}}
+	key := func(s string) {
+		switch s {
+		case "enter":
+			m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		case "esc":
+			m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+		case "ctrl+s":
+			m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+		default:
+			m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+		}
+	}
+
+	// "0" is the last tab.
+	key("0")
+	if m.tab != tabChanges {
+		t.Fatalf("0 went to tab %d", m.tab)
+	}
+
+	// TRAFFIC (live): the monitor row edits the monitor.
+	m.tab, m.sel = tabTraffic, 1
+	key("e")
+	if m.form == nil || m.form.title != "Edit monitor survival" {
+		t.Fatalf("monitor form not opened: %+v", m.form)
+	}
+	key("esc")
+	if got := m.selectedLabel(); got != "monitor survival" {
+		t.Fatalf("remove prompt names %q", got)
+	}
+	m.sel = 0 // the section header: nothing to edit
+	key("e")
+	if m.form != nil {
+		t.Fatal("header row opened a form")
+	}
+
+	// TOOLS: a check runs in the background after the form closes.
+	m.tab, m.sel = tabTools, 1
+	key("enter")
+	if m.form == nil {
+		t.Fatal("check form not opened")
+	}
+	key("ctrl+s")
+	if m.form != nil || !strings.Contains(m.note, "Running ping") {
+		t.Fatalf("check did not start: form=%v note=%q", m.form, m.note)
+	}
+	m.Update(diagMsg{res: diag.Result{OK: true, Output: "64 bytes from 100.88.0.2"}})
+	if !strings.Contains(m.note, "64 bytes") {
+		t.Fatalf("result not shown: %q", m.note)
+	}
+	key("x") // any key closes the note
+
+	// SETTINGS: the admin password is never shown.
+	m.tab = tabSettings
+	for i, r := range m.settingRows() {
+		if r.label == "Web UI admin login" {
+			m.sel = i
+		}
+	}
+	key("enter")
+	if m.form == nil {
+		t.Fatal("admin form not opened")
+	}
+	key("enter") // to the password field
+	for _, r := range "hunter22" {
+		key(string(r))
+	}
+	if out := m.View(); strings.Contains(out, "hunter22") {
+		t.Fatal("password shown in clear text")
+	}
+	key("esc")
+
+	// NODES: detected subnets skip what is shared and container bridges.
+	if got := m.detectedSubnets(m.v.Nodes[1].Value); len(got) != 1 || got[0] != "192.168.90.0/24" {
+		t.Fatalf("detected %v", got)
 	}
 }

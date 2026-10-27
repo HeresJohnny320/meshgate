@@ -66,6 +66,9 @@ func (m *model_) header(width int) string {
 	if r := m.v.Runtime.HomeRelay; r != "" {
 		items = append(items, labelStyle.Render("RELAY ")+publicStyle.Render(m.name(r)))
 	}
+	if m.v.Runtime.Userspace {
+		items = append(items, labelStyle.Render("WIREGUARD ")+warnStyle.Render("USERSPACE"))
+	}
 	web := "OFF"
 	for _, n := range m.v.Nodes {
 		if n.Value.WebUI {
@@ -74,11 +77,11 @@ func (m *model_) header(width int) string {
 	}
 	items = append(items, labelStyle.Render("WEB UI ")+onOff(web != "OFF", strings.ToUpper(web), "NONE"))
 	if self.Kind == model.NodeServer && len(self.Routes) > 0 {
-		items = append(items, labelStyle.Render("LAN ")+onOff(!self.Restricted(), "OPEN", "RESTRICTED"))
+		items = append(items, labelStyle.Render("LAN ")+policyText(self))
 	}
 	var tabLine []string
 	for i, t := range tabs {
-		label := fmt.Sprintf("%d %s", i+1, t)
+		label := fmt.Sprintf("%d %s", (i+1)%10, t)
 		if i == m.tab {
 			tabLine = append(tabLine, keyStyle.Render(" "+label+" "))
 		} else {
@@ -114,11 +117,29 @@ func (m *model_) listView(width int) string {
 	switch {
 	case n == 0:
 		body = []string{panel(width, quietBorder, mutedStyle.Render(m.emptyText()))}
+	case m.tab == tabTraffic && !m.history:
+		rows := m.liveRows()
+		start, end := window(m.sel, n, max(1, available))
+		for i := start; i < end; i++ {
+			body = append(body, line(width, m.liveLine(rows[i], i == m.sel)))
+		}
 	case m.tab == tabTraffic:
 		rows := m.histRows()
 		start, end := window(m.sel, n, max(1, available))
 		for i := start; i < end; i++ {
 			body = append(body, line(width, m.trafficLine(rows[i], i == m.sel, width)))
+		}
+	case m.tab == tabTools:
+		rows := m.toolRows()
+		start, end := window(m.sel, n, max(1, available))
+		for i := start; i < end; i++ {
+			body = append(body, line(width, m.toolLine(rows[i], i == m.sel)))
+		}
+	case m.tab == tabSettings:
+		rows := m.settingRows()
+		start, end := window(m.sel, n, max(1, available))
+		for i := start; i < end; i++ {
+			body = append(body, line(width, m.settingLine(rows[i], i == m.sel)))
 		}
 	case m.tab == tabChanges:
 		start, end := window(m.sel, n, max(1, available))
@@ -169,6 +190,9 @@ func (m *model_) tabHint() string {
 	case tabChanges:
 		return "what changed in each version (+ added, - removed, ~ changed or fixed)"
 	case tabTraffic:
+		if !m.history {
+			return "live speeds and totals since each server started   M: history"
+		}
 		where := ""
 		if m.hist != nil {
 			where = ", stored on " + m.hist.Server
@@ -176,7 +200,11 @@ func (m *model_) tabHint() string {
 		if m.histErr != "" {
 			where = " (" + m.histErr + ")"
 		}
-		return "traffic history, last " + m.histRange + where + "   V: change period"
+		return "traffic history, last " + m.histRange + where + "   V: change period   M: live"
+	case tabTools:
+		return "connectivity checks from this node"
+	case tabSettings:
+		return "mesh-wide settings and the web UI's certificates"
 	case tabDevices:
 		return "join tokens for new servers, phones and PCs"
 	}
@@ -204,9 +232,17 @@ func (m *model_) footer(width int) string {
 	keys := []key{{"UP/DOWN", "select"}, {"TAB", "section"}}
 	switch m.tab {
 	case tabNodes:
-		keys = append(keys, key{"E", "edit"}, key{"U", "update"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
+		keys = append(keys, key{"E", "edit"}, key{"U", "update"}, key{"CTRL+U", "update all"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
 	case tabTraffic:
-		keys = append(keys, key{"V", "period (6h/1d/1w/1m/1y)"})
+		if m.history {
+			keys = append(keys, key{"V", "period (6h/1d/1w/1m/1y)"}, key{"O", "save CSV"}, key{"M", "live"})
+		} else {
+			keys = append(keys, key{"A", "add monitor"}, key{"E", "edit"}, key{"D", "remove"}, key{"M", "history"})
+		}
+	case tabTools:
+		keys = append(keys, key{"ENTER", "run"})
+	case tabSettings:
+		keys = append(keys, key{"ENTER", "change / show"})
 	case tabForwards, tabHTTPS, tabRules, tabExits:
 		keys = append(keys, key{"A", "add"}, key{"E", "edit"}, key{"T", "on/off"}, key{"D", "remove"}, key{"C", "use all-nodes value"})
 	case tabDevices:
@@ -245,6 +281,12 @@ func (m *model_) card(i, width int) string {
 		it := m.v.Nodes[i]
 		n := it.Value
 		l1 = marker + m.nodeState(n) + "  " + nameStyle(sel).Render(n.Name) + "  " + mutedStyle.Render(m.roles(n)) + localTag(it.Local)
+		if v := m.v.Statuses[n.ID].Version; v != "" {
+			l1 += "  " + mutedStyle.Render(v)
+		}
+		if m.outdated(n) {
+			l1 += " " + warnStyle.Render("UPDATE AVAILABLE")
+		}
 		p := m.v.Runtime.Peers[n.ID]
 		path, hs := "this node", ""
 		if n.ID != m.v.SelfID {
@@ -254,13 +296,16 @@ func (m *model_) card(i, width int) string {
 		if hs != "" {
 			l2 += labelStyle.Render("   HANDSHAKE ") + valueStyle.Render(hs)
 		}
+		if p.RxBytes+p.TxBytes > 0 {
+			l2 += labelStyle.Render("   RX/TX ") + valueStyle.Render(humanBytes(float64(p.RxBytes))+" / "+humanBytes(float64(p.TxBytes)))
+		}
 		ep := p.Endpoint
 		if ep == "" && len(n.Endpoints) > 0 {
 			ep = strings.Join(n.Endpoints, " ")
 		}
 		l3 = labelStyle.Render("ENDPOINT ") + addressStyle.Render(dash(ep))
 		if len(n.Routes) > 0 {
-			l3 += labelStyle.Render("   SUBNETS ") + portStyle.Render(strings.Join(n.Routes, " ")) + " " + onOff(!n.Restricted(), "OPEN", "RESTRICTED")
+			l3 += labelStyle.Render("   SUBNETS ") + portStyle.Render(strings.Join(n.Routes, " ")) + " " + policyText(n)
 		}
 	case tabForwards:
 		it := m.v.Forwards[i]
@@ -496,6 +541,17 @@ func dash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// policyText is a node's LAN policy as a badge.
+func policyText(n model.Node) string {
+	switch {
+	case n.FirewallManaged():
+		return warnStyle.Render("PFSENSE RULES")
+	case n.Restricted():
+		return onOff(false, "", "RESTRICTED")
+	}
+	return onOff(true, "OPEN", "")
 }
 
 func onOff(on bool, onText, offText string) string {

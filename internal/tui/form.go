@@ -71,6 +71,15 @@ func (f *form) text(key, label, val, placeholder string) *form {
 	return f
 }
 
+// password is a text field that shows dots instead of what is typed.
+func (f *form) password(key, label string) *form {
+	f.text(key, label, "", "")
+	in := &f.fields[len(f.fields)-1].input
+	in.EchoMode = textinput.EchoPassword
+	in.EchoCharacter = '•'
+	return f
+}
+
 func (f *form) toggle(key, label string, on bool) *form {
 	f.fields = append(f.fields, &field{key: key, label: label, kind: fBool, on: on})
 	return f
@@ -184,9 +193,12 @@ func (f *form) view(width int) string {
 		switch fl.kind {
 		case fText:
 			fl.input.Width = max(10, inner-32)
-			if i == f.focus {
+			switch {
+			case i == f.focus:
 				val = fl.input.View()
-			} else {
+			case fl.input.EchoMode == textinput.EchoPassword:
+				val = style.Render(dash(strings.Repeat("•", len([]rune(fl.input.Value())))))
+			default:
 				val = style.Render(dash(fl.input.Value()))
 			}
 		case fBool:

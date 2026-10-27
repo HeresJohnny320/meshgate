@@ -746,6 +746,7 @@ function renderNodes(rt) {
       <td>${p ? bytes(p.rx_bytes) + " / " + bytes(p.tx_bytes) : ""}</td>
       <td class="mono wrap">${esc((n.routes || []).join(", "))}${(n.routes || []).length ? ({ restricted: ' <span class="chip local">restricted</span>', firewall: ' <span class="chip local">pfSense rules</span>' }[n.lan_policy] || ' <span class="chip">open</span>') : ""}</td>
       <td class="actions">${updBtn}<button class="small" data-edit-node="${esc(n.id)}">Edit</button>
+        ${it.local ? `<button class="small" data-clear="node:${esc(n.id)}">Use cluster value</button>` : ""}
         ${n.id !== view.self_id ? `<button class="small danger" data-del="node:${esc(n.id)}">Remove</button>` : ""}</td></tr>`;
   });
   const latest = rt.latest || "";
@@ -785,6 +786,7 @@ function renderRoutes() {
       <td>${r.force_https ? "HTTPS only" : "HTTP + HTTPS"}</td><td>${r.enabled ? "on" : '<span class="chip">off</span>'}</td>
       <td class="actions"><button class="small" data-toggle="httproute:${esc(r.id)}:${r.enabled ? 0 : 1}">${r.enabled ? "Disable" : "Enable"}</button>
       <button class="small" data-edit-route="${esc(r.id)}">Edit</button>
+      ${it.local ? `<button class="small" data-clear="httproute:${esc(r.id)}">Use cluster value</button>` : ""}
       <button class="small danger" data-del="httproute:${esc(r.id)}">Delete</button></td></tr>`;
   });
   $("#routes").innerHTML = `<tr><th>Hostname</th><th>Edge</th><th>Target</th><th>Mode</th><th>State</th><th></th></tr>` +
@@ -806,6 +808,7 @@ function renderExitRoutes() {
       <td>${r.enabled ? '<span class="dot ok"></span>on' : '<span class="chip">off</span>'}</td>
       <td class="actions"><button class="small" data-toggle="exitroute:${esc(r.id)}:${r.enabled ? 0 : 1}">${r.enabled ? "Disable" : "Enable"}</button>
       <button class="small" data-edit-exit="${esc(r.id)}">Edit</button>
+      ${it.local ? `<button class="small" data-clear="exitroute:${esc(r.id)}">Use cluster value</button>` : ""}
       <button class="small danger" data-del="exitroute:${esc(r.id)}">Delete</button></td></tr>`;
   });
   $("#exitroutes").innerHTML = `<tr><th>Name</th><th>Device IP / subnet</th><th>Router</th><th>Exit node</th><th>Exit only</th><th>State</th><th></th></tr>` +

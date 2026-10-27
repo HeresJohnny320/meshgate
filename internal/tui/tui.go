@@ -5,6 +5,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,13 +15,15 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/heresjohnny320/meshgate/internal/changelog"
+	"github.com/heresjohnny320/meshgate/internal/diag"
 	"github.com/heresjohnny320/meshgate/internal/join"
 	"github.com/heresjohnny320/meshgate/internal/localapi"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/ops"
+	"github.com/heresjohnny320/meshgate/internal/traffic"
 )
 
-var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES", "CHANGES", "TRAFFIC"}
+var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES", "TRAFFIC", "TOOLS", "SETTINGS", "CHANGES"}
 
 // changeLines is the changelog shown on the CHANGES tab.
 var changeLines = func() []string {
@@ -40,8 +43,10 @@ const (
 	tabRules
 	tabExits
 	tabDevices
-	tabChanges
 	tabTraffic
+	tabTools
+	tabSettings
+	tabChanges
 )
 
 // histResp is the log server's answer for one range (ops "history").
@@ -62,6 +67,14 @@ type viewMsg struct {
 	err     error
 	hist    *histResp
 	histErr string
+	traffic []traffic.Node
+	live    bool // traffic was fetched (TRAFFIC tab, live view)
+}
+
+// diagMsg is the result of a check started on the TOOLS tab.
+type diagMsg struct {
+	res diag.Result
+	err error
 }
 type tickMsg struct{}
 
@@ -82,6 +95,13 @@ type model_ struct {
 	hist      *histResp
 	histErr   string
 	histRange string
+	// TRAFFIC tab: live counters (default) or history (M switches).
+	history    bool
+	traffic    []traffic.Node
+	trafficErr string
+	// diagReq is a check the TOOLS form asked for; it runs in the
+	// background so traceroutes do not freeze the screen.
+	diagReq *diag.Check
 }
 
 // Run starts the TUI.
@@ -100,11 +120,17 @@ func tick() tea.Cmd {
 }
 
 func (m *model_) load() tea.Cmd {
-	tab, rng := m.tab, m.histRange
+	tab, rng, hist := m.tab, m.histRange, m.history
 	return func() tea.Msg {
 		v, err := m.api.View()
 		msg := viewMsg{v: v, err: err}
-		if tab == tabTraffic && err == nil {
+		if tab == tabTraffic && !hist && err == nil {
+			msg.live = true
+			if terr := m.api.Get("traffic", &msg.traffic); terr != nil {
+				msg.traffic = nil
+			}
+		}
+		if tab == tabTraffic && hist && err == nil {
 			var h histResp
 			if herr := m.api.Get("history?range="+rng, &h); herr != nil {
 				msg.histErr = herr.Error()
@@ -126,18 +152,29 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.hist != nil || msg.histErr != "" {
 			m.hist, m.histErr = msg.hist, msg.histErr
 		}
+		if msg.live {
+			m.traffic = msg.traffic
+		}
 		if n := m.rows(); m.sel >= n {
 			m.sel = max(0, n-1)
 		}
 		return m, nil
 	case tickMsg:
 		return m, tea.Batch(m.load(), tick())
+	case diagMsg:
+		m.note = diagText(msg.res, msg.err)
+		return m, nil
 	}
 
 	if m.form != nil {
 		closed, cmd := m.form.update(msg)
 		if closed {
 			m.form = nil
+			if c := m.diagReq; c != nil {
+				m.diagReq = nil
+				m.note = "Running " + c.Kind + " " + c.Target + "…\n\n(the result replaces this when it is done)"
+				return m, tea.Batch(m.load(), m.runDiag(*c))
+			}
 			return m, m.load()
 		}
 		return m, cmd
@@ -166,10 +203,16 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "tab", "right", "l":
 		m.tab, m.sel = (m.tab+1)%len(tabs), 0
+		if m.tab == tabTraffic {
+			return m, m.load()
+		}
 	case "shift+tab", "left", "h":
 		m.tab, m.sel = (m.tab-1+len(tabs))%len(tabs), 0
-	case "1", "2", "3", "4", "5", "6", "7", "8":
-		m.tab, m.sel = int(key[0]-'1'), 0
+		if m.tab == tabTraffic {
+			return m, m.load()
+		}
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
+		m.tab, m.sel = (int(key[0]-'0')+9)%10, 0
 		if m.tab == tabTraffic {
 			return m, m.load()
 		}
@@ -194,8 +237,21 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "t", " ":
 		m.toggleItem()
 		return m, m.load()
-	case "v":
+	case "m":
 		if m.tab == tabTraffic {
+			m.history, m.sel = !m.history, 0
+			return m, m.load()
+		}
+	case "o":
+		if m.tab == tabTraffic && m.history {
+			m.exportHistory()
+		}
+	case "ctrl+u":
+		if m.tab == tabNodes {
+			m.updateAll()
+		}
+	case "v":
+		if m.tab == tabTraffic && m.history {
 			for i, r := range histRanges {
 				if r == m.histRange {
 					m.histRange = histRanges[(i+1)%len(histRanges)]
@@ -258,6 +314,10 @@ func (m *model_) selectedLabel() string {
 		return "exit route " + labelOr(m.v.ExitRoutes[m.sel].Value.Name)
 	case tabDevices:
 		return "token " + m.v.Tokens[m.sel].ID
+	case tabTraffic:
+		if mon, ok := m.selectedMonitor(); ok {
+			return "monitor " + labelOr(mon.Value.Name)
+		}
 	}
 	return ""
 }
@@ -321,7 +381,14 @@ func (m *model_) rows() int {
 	case tabChanges:
 		return len(changeLines)
 	case tabTraffic:
+		if !m.history {
+			return len(m.liveRows())
+		}
 		return len(m.histRows())
+	case tabTools:
+		return len(m.toolRows())
+	case tabSettings:
+		return len(m.settingRows())
 	case tabDevices:
 		return len(m.v.Tokens)
 	}
@@ -405,6 +472,10 @@ func (m *model_) newItem() {
 		m.exitRouteForm(nil)
 	case tabDevices:
 		m.tokenForm()
+	case tabTraffic:
+		if !m.history {
+			m.monitorForm(nil)
+		}
 	}
 }
 
@@ -427,6 +498,14 @@ func (m *model_) editItem() {
 	case tabExits:
 		it := m.v.ExitRoutes[m.sel]
 		m.exitRouteForm(&it)
+	case tabTraffic:
+		if it, ok := m.selectedMonitor(); ok {
+			m.monitorForm(&it)
+		}
+	case tabTools:
+		m.diagForm(m.toolRows()[m.sel].check)
+	case tabSettings:
+		m.settingRows()[m.sel].open()
 	}
 }
 
@@ -448,6 +527,14 @@ func (m *model_) deleteItem() {
 		kind, id = model.KindExitRoute, m.v.ExitRoutes[m.sel].Value.ID
 	case tabDevices:
 		kind, id = model.KindToken, m.v.Tokens[m.sel].ID
+	case tabTraffic:
+		it, ok := m.selectedMonitor()
+		if !ok {
+			return
+		}
+		kind, id = model.KindMonitor, it.Value.ID
+	default:
+		return
 	}
 	if err := m.api.Post("delete", map[string]string{"kind": kind, "id": id, "scope": "cluster"}, nil); err != nil {
 		m.message = "Error: " + err.Error()
@@ -542,6 +629,7 @@ func (m *model_) routeForm(it *ops.Item[model.HTTPRoute]) {
 
 func (m *model_) nodeForm(it ops.Item[model.Node]) {
 	n := it.Value
+	detected := m.detectedSubnets(n)
 	f := newForm("Edit node "+n.Name, func(v map[string]string) error {
 		patch := map[string]any{"name": v["name"]}
 		if n.Kind == model.NodeStatic {
@@ -564,7 +652,15 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			patch["exits_allowed"] = allowed
 		} else if n.Kind == model.NodeServer {
 			patch["endpoints"] = lines(v["endpoints"])
-			patch["routes"] = lines(v["routes"])
+			routes := lines(v["routes"])
+			if v["detect"] == "true" {
+				for _, r := range detected {
+					if !slices.Contains(routes, r) {
+						routes = append(routes, r)
+					}
+				}
+			}
+			patch["routes"] = routes
 			patch["relay"] = v["relay"] == "true"
 			patch["exit"] = v["exit"] == "true"
 			tp, _ := strconv.Atoi(strings.TrimSpace(v["test_port"]))
@@ -585,7 +681,11 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 	switch n.Kind {
 	case model.NodeServer:
 		f.text("endpoints", "Endpoints (host:port, comma)", strings.Join(n.Endpoints, ", "), "1.2.3.4:51820, 192.168.1.10:51820").
-			text("routes", "Shared subnets (comma)", strings.Join(n.Routes, ", "), "192.168.1.0/24").
+			text("routes", "Shared subnets (comma)", strings.Join(n.Routes, ", "), "192.168.1.0/24")
+		if len(detected) > 0 {
+			f.toggle("detect", "Also share detected: "+strings.Join(detected, ", "), false)
+		}
+		f.
 			toggle("relay", "Relay (public endpoint)", n.Relay).
 			toggle("exit", "Exit node (devices may use it for internet)", n.Exit).
 			text("test_port", "Test service port (empty = off)", itoa0(n.TestPort), "8099").
@@ -816,6 +916,9 @@ func (m *model_) histRows() []histRow {
 		add("https://"+it.Value.Hostname, "r:"+it.Value.ID)
 		add("http://"+it.Value.Hostname, "h:"+it.Value.ID)
 	}
+	for _, it := range m.v.Monitors {
+		add("monitor "+labelOr(it.Value.Name), "m:"+it.Value.ID)
+	}
 	var keys []string
 	for k := range series {
 		keys = append(keys, k)
@@ -829,12 +932,14 @@ func (m *model_) histRows() []histRow {
 			add(fmt.Sprintf("%s (%s %s, deleted)", labelOr(l["name"]), l["proto"], l["port"]), k)
 		case l["hostname"] != "":
 			add(l["kind"]+"://"+l["hostname"]+" (deleted)", k)
+		case strings.HasPrefix(k, "m:"):
+			add("monitor "+labelOr(l["name"])+" (deleted)", k)
 		}
 	}
 	// Per target IP: forwards and sites to the same machine.
 	ips := map[string][]string{}
 	for _, k := range keys {
-		if ip := labels[k]["target_ip"]; ip != "" && !strings.HasPrefix(k, "d:") {
+		if ip := labels[k]["target_ip"]; ip != "" && !strings.HasPrefix(k, "d:") && !strings.HasPrefix(k, "m:") {
 			ips[ip] = append(ips[ip], k)
 		}
 	}
@@ -845,6 +950,23 @@ func (m *model_) histRows() []histRow {
 	sort.Strings(ipList)
 	for _, ip := range ipList {
 		add("target "+ip, ips[ip]...)
+	}
+	// Per public port: forwards and sites on the same port.
+	ports := map[string][]string{}
+	for _, k := range keys {
+		if p := labels[k]["port"]; p != "" && (strings.HasPrefix(k, "f:") || strings.HasPrefix(k, "r:") || strings.HasPrefix(k, "h:")) {
+			ports[p] = append(ports[p], k)
+		}
+	}
+	var portList []string
+	for p := range ports {
+		portList = append(portList, p)
+	}
+	sort.Slice(portList, func(i, j int) bool {
+		return atoi(strings.Split(portList[i], "-")[0]) < atoi(strings.Split(portList[j], "-")[0])
+	})
+	for _, p := range portList {
+		add("port "+p, ports[p]...)
 	}
 	// Per node: the links a server measured (its WireGuard traffic).
 	byNode := map[string][]string{}
