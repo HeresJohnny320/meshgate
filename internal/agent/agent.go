@@ -337,6 +337,7 @@ func (a *Agent) reconcile(ctx context.Context) {
 		return
 	}
 	warn = append(warn, cfg.Warnings...)
+	a.wg.SyncUnderlay()
 	if a.lastWG == nil || !reflect.DeepEqual(*a.lastWG, cfg) {
 		if err := a.wg.Apply(cfg); err != nil {
 			warn = append(warn, "wireguard: "+err.Error())

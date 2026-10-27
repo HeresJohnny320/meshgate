@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -25,8 +27,11 @@ import (
 )
 
 const (
-	prioReply  = 5200
-	prioRoutes = 5210
+	// Before other VPNs' rules (NetBird uses 105/110, wg-quick and
+	// Tailscale come later), so they cannot pull the mesh into their tunnel.
+	prioUnderlay = 90
+	prioReply    = 5200
+	prioRoutes   = 5210
 	// LAN exits: per source, first the main table without its default
 	// route (LAN, VLAN and local routes win), then the exit table.
 	prioLANLocal = 5220
@@ -40,10 +45,11 @@ type Manager struct {
 	Key       wgtypes.Key
 	Userspace bool // true if using wireguard-go
 
-	mu     sync.Mutex
-	client *wgctrl.Client
-	dev    *device.Device
-	uapi   net.Listener
+	mu       sync.Mutex
+	client   *wgctrl.Client
+	dev      *device.Device
+	uapi     net.Listener
+	underlay bool // connmark rules loaded
 }
 
 // New creates a manager; call Up before Apply.
@@ -395,6 +401,12 @@ func (m *Manager) Down() {
 	syncSrcRules(prioLANLocal, unix.RT_TABLE_MAIN, true, nil)
 	syncSrcRules(prioLANExit, fw.TableLANExit, false, nil)
 	syncSrcRules(prioLANBlock, fw.TableLANBlock, false, nil)
+	ensureRule(prioUnderlay, fw.TableUnderlay, 0, false, false)
+	syncTable(fw.TableUnderlay, nil)
+	if m.underlay {
+		nft("table inet meshgate_underlay\ndelete table inet meshgate_underlay\n")
+		m.underlay = false
+	}
 	if m.uapi != nil {
 		m.uapi.Close()
 	}
@@ -408,6 +420,130 @@ func (m *Manager) Down() {
 		m.client.Close()
 		m.client = nil
 	}
+}
+
+// SyncUnderlay keeps WireGuard's own packets and the path probes on this
+// machine's real connection when another VPN (wg-quick, NetBird,
+// Tailscale, OpenVPN) takes over the default route, so the mesh is a
+// separate tunnel instead of running inside that one. Their sockets carry
+// MarkBypass and look up TableUnderlay first: a copy of the main table's
+// routes over real interfaces. Subnets that exist only inside another VPN
+// get a throw route, so a peer reachable only there still works. Called
+// every reconcile, so DHCP and interface changes are followed.
+func (m *Manager) SyncUnderlay() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	links, _ := netlink.LinkList()
+	real := map[int]bool{}
+	for _, l := range links {
+		a := l.Attrs()
+		real[a.Index] = a.Name != m.Iface && !fw.IsTunnel(a.Name, a.Flags)
+	}
+	all, _ := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: unix.RT_TABLE_UNSPEC}, netlink.RT_FILTER_TABLE)
+	var want []netlink.Route
+	have := map[string]bool{}
+	for _, r := range all {
+		if r.Table != unix.RT_TABLE_MAIN || r.Type != unix.RTN_UNICAST || !viaReal(r, real) {
+			continue
+		}
+		want = append(want, netlink.Route{LinkIndex: r.LinkIndex, Dst: r.Dst, Gw: r.Gw, Src: r.Src, Scope: r.Scope,
+			Priority: r.Priority, MultiPath: r.MultiPath, Flags: r.Flags, Type: unix.RTN_UNICAST, Table: fw.TableUnderlay})
+		have[dstKey(r.Dst)] = true
+	}
+	for _, r := range all {
+		// Another VPN's own subnets (not its 0/0 or 0/1 takeover routes).
+		if r.Table == fw.TableUnderlay || r.Dst == nil || r.LinkIndex == 0 || real[r.LinkIndex] || have[dstKey(r.Dst)] {
+			continue
+		}
+		if ones, _ := r.Dst.Mask.Size(); ones < 8 || r.Type != unix.RTN_UNICAST {
+			continue
+		}
+		if l, err := netlink.LinkByIndex(r.LinkIndex); err != nil || l.Attrs().Name == m.Iface {
+			continue
+		}
+		have[dstKey(r.Dst)] = true
+		want = append(want, netlink.Route{Dst: r.Dst, Type: unix.RTN_THROW, Table: fw.TableUnderlay})
+	}
+	syncTable(fw.TableUnderlay, want)
+	ensureRule(prioUnderlay, fw.TableUnderlay, fw.MarkBypass, false, len(want) > 0)
+	if !m.underlay {
+		// Replies carry no mark; restore it from the connection so strict
+		// rp_filter (with src_valid_mark) checks them against the same
+		// table, as wg-quick does.
+		m.underlay = nft(fmt.Sprintf(`table inet meshgate_underlay
+delete table inet meshgate_underlay
+table inet meshgate_underlay {
+	chain out {
+		type route hook output priority mangle;
+		meta l4proto udp meta mark 0x%[1]x ct mark set meta mark
+	}
+	chain pre {
+		type filter hook prerouting priority mangle;
+		meta l4proto udp ct mark 0x%[1]x meta mark set ct mark
+	}
+}
+`, fw.MarkBypass)) == nil
+	}
+}
+
+func viaReal(r netlink.Route, real map[int]bool) bool {
+	if len(r.MultiPath) > 0 {
+		for _, h := range r.MultiPath {
+			if !real[h.LinkIndex] {
+				return false
+			}
+		}
+		return true
+	}
+	return real[r.LinkIndex]
+}
+
+func dstKey(d *net.IPNet) string {
+	if d == nil {
+		return "0.0.0.0/0"
+	}
+	return d.String()
+}
+
+func routeKey(r netlink.Route) string {
+	k := fmt.Sprintf("%d %s %s %d %d %s", r.Type, dstKey(r.Dst), r.Gw, r.LinkIndex, r.Priority, r.Src)
+	for _, h := range r.MultiPath {
+		k += fmt.Sprintf(" %s@%d", h.Gw, h.LinkIndex)
+	}
+	return k
+}
+
+// syncTable makes table hold exactly want.
+func syncTable(table int, want []netlink.Route) {
+	keep := map[string]bool{}
+	for _, r := range want {
+		keep[routeKey(r)] = true
+	}
+	have, _ := netlink.RouteListFiltered(netlink.FAMILY_V4, &netlink.Route{Table: table}, netlink.RT_FILTER_TABLE)
+	for _, r := range have {
+		if keep[routeKey(r)] {
+			delete(keep, routeKey(r))
+			continue
+		}
+		netlink.RouteDel(&r)
+	}
+	for _, r := range want {
+		if keep[routeKey(r)] {
+			if err := netlink.RouteReplace(&r); err != nil {
+				log.Printf("wg: underlay route %s: %v", dstKey(r.Dst), err)
+			}
+		}
+	}
+}
+
+func nft(rules string) error {
+	cmd := exec.Command("nft", "-f", "-")
+	cmd.Stdin = strings.NewReader(rules)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("wg: nft: %v: %s", err, strings.TrimSpace(string(out)))
+		return err
+	}
+	return nil
 }
 
 // MarkSocket is a net.Dialer/ListenConfig Control func that tags sockets

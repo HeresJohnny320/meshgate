@@ -263,6 +263,9 @@ func (m *Manager) Stats() map[string]PeerStat {
 	return st
 }
 
+// SyncUnderlay is Linux only for now.
+func (m *Manager) SyncUnderlay() {}
+
 // Down destroys the interface.
 func (m *Manager) Down() {
 	m.mu.Lock()

@@ -154,6 +154,9 @@ func hexToB64(h string) string {
 	return k.String()
 }
 
+// SyncUnderlay is Linux only for now.
+func (m *Manager) SyncUnderlay() {}
+
 // Down removes the adapter.
 func (m *Manager) Down() {
 	m.mu.Lock()

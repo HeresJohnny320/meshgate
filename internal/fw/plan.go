@@ -27,6 +27,7 @@ const (
 	TableReply    = 51821  // default route over the mesh for MarkPreserve
 	TableLANExit  = 51822  // default route for LAN devices sent to an exit node
 	TableLANBlock = 51823  // blackhole for exit-only LAN devices while no exit is reachable
+	TableUnderlay = 51824  // MarkBypass sockets: real interfaces only, never another VPN
 )
 
 // Input describes what this node needs.
