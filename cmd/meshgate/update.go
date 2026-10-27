@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/heresjohnny320/meshgate/internal/agent"
@@ -38,6 +39,14 @@ func cmdUpdate(args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+	if runtime.GOOS != "windows" {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("updating replaces the binary and restarts the service: run it as root (sudo meshgate update)")
+		}
+		if exe != "/usr/local/bin/meshgate" {
+			fmt.Printf("note: updating %s, but the service runs /usr/local/bin/meshgate\n", exe)
+		}
 	}
 	fmt.Printf("Downloading %s and verifying its checksum...\n", update.Asset())
 	if err := update.Install(ctx, tag, exe); err != nil {
