@@ -629,7 +629,59 @@ func outboundIP() netip.Addr {
 	}
 	defer c.Close()
 	ip, _ := netip.AddrFromSlice(c.LocalAddr().(*net.UDPAddr).IP.To4())
-	return ip
+	if !onTunnel(ip) {
+		return ip
+	}
+	// Another VPN (WireGuard, NetBird, Tailscale, ...) carries the default
+	// route: its address is not how peers reach us. Use a real interface,
+	// preferring a public address.
+	var lan netip.Addr
+	ifs, _ := net.Interfaces()
+	for _, i := range ifs {
+		if i.Flags&net.FlagUp == 0 || i.Flags&net.FlagLoopback != 0 || fw.IsTunnel(i.Name, i.Flags) || isBridge(i.Name) {
+			continue
+		}
+		addrs, _ := i.Addrs()
+		for _, a := range addrs {
+			n, ok := a.(*net.IPNet)
+			if !ok || n.IP.To4() == nil {
+				continue
+			}
+			ip, _ := netip.AddrFromSlice(n.IP.To4())
+			if ip.IsGlobalUnicast() && !ip.IsPrivate() && !isCGNAT(ip) {
+				return ip
+			}
+			if !lan.IsValid() && ip.IsPrivate() {
+				lan = ip
+			}
+		}
+	}
+	return lan
+}
+
+// onTunnel reports whether ip belongs to a VPN tunnel interface.
+func onTunnel(ip netip.Addr) bool {
+	ifs, _ := net.Interfaces()
+	for _, i := range ifs {
+		addrs, _ := i.Addrs()
+		for _, a := range addrs {
+			if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip.AsSlice()) {
+				return fw.IsTunnel(i.Name, i.Flags)
+			}
+		}
+	}
+	return false
+}
+
+// isBridge reports container/VM bridges (Docker, libvirt, ...), which are
+// not how other machines reach us.
+func isBridge(name string) bool {
+	for _, p := range []string{"docker", "br-", "veth", "virbr", "cni", "flannel", "cali", "lxc"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func isCGNAT(a netip.Addr) bool {

@@ -405,13 +405,13 @@ func IfaceFor(pfx netip.Prefix) string {
 }
 
 // IsTunnel reports whether an interface is a VPN tunnel (another WireGuard,
-// OpenVPN, Tailscale, ...). Its addresses are not a LAN: sharing them or
+// NetBird, OpenVPN, Tailscale, ...). Its addresses are not a LAN: sharing them or
 // publishing them as endpoints would run the mesh inside that VPN.
 func IsTunnel(name string, flags net.Flags) bool {
 	if flags&net.FlagPointToPoint != 0 {
 		return true
 	}
-	for _, p := range []string{"wg", "tun", "tap", "ovpn", "tailscale", "zt", "ppp", "ipsec", "gif", "gre"} {
+	for _, p := range []string{"wg", "wt", "tun", "tap", "ovpn", "tailscale", "zt", "ppp", "ipsec", "gif", "gre"} {
 		if strings.HasPrefix(name, p) {
 			return true
 		}
