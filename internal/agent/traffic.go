@@ -108,7 +108,7 @@ func (a *Agent) readTraffic() {
 // localTraffic is this node's report.
 func (a *Agent) localTraffic() traffic.Node {
 	t := traffic.Node{Node: a.Cfg.NodeID, Forwards: map[string]traffic.Rate{}, Routes: map[string]traffic.Route{},
-		ACLs: map[string]uint64{}, Peers: map[string]traffic.Rate{}}
+		ACLs: map[string]uint64{}, Peers: map[string]traffic.Rate{}, Monitors: map[string]traffic.Rate{}}
 	ms := &a.meters
 	for _, f := range store.List[model.Forward](a.Store, model.KindForward) {
 		if f.EdgeNode == a.Cfg.NodeID {
@@ -128,6 +128,11 @@ func (a *Agent) localTraffic() traffic.Node {
 	for _, acl := range store.List[model.ACL](a.Store, model.KindACL) {
 		if acl.Node == a.Cfg.NodeID {
 			t.ACLs[acl.ID], _ = ms.get(fw.CounterName("a", acl.ID, ""))
+		}
+	}
+	for _, m := range store.List[model.Monitor](a.Store, model.KindMonitor) {
+		if m.Node == a.Cfg.NodeID {
+			t.Monitors[m.ID] = ms.rate(fw.CounterName("m", m.ID, "in"), fw.CounterName("m", m.ID, "out"))
 		}
 	}
 	for _, n := range store.List[model.Node](a.Store, model.KindNode) {

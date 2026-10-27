@@ -122,6 +122,11 @@
           <div id="hist-chart" tabindex="0" aria-label="Traffic history chart. Use the arrow keys to read values."></div>
           <p class="hint" id="hist-info"></p>
         </div>
+        <div class="row-head gap"><h2>Monitors</h2><button id="monitor-new">New monitor</button></div>
+        <p class="hint">Measure traffic to an IP, a port or both on a server node, e.g. a Minecraft proxy on the VPS
+          talking to <code>192.168.1.51:25566</code> at home. A monitor only counts: it does not route, open or
+          block anything (use Port forwards for that). Linux nodes.</p>
+        <div class="table-wrap"><table id="traffic-monitors"></table></div>
         <h2 class="gap">By target IP</h2>
         <div class="table-wrap"><table id="traffic-ips"></table></div>
         <h2 class="gap">Port forwards</h2>

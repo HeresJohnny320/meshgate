@@ -111,7 +111,7 @@ fieldset.lan-exit legend { padding: 0 6px; color: var(--text); font-size: 14px; 
 .hist-tip .r b { font-variant-numeric: tabular-nums; text-align: right; }
 .hist-tip .r span { color: var(--muted); }
 .hist-tip .sub { color: var(--muted); font-size: 11px; margin: 0 0 4px 20px; font-variant-numeric: tabular-nums; }
-h2.gap { margin-top: 24px; }
+h2.gap, .row-head.gap { margin-top: 24px; }
 .fp { display: block; overflow-wrap: anywhere; font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--chip); padding: 8px 10px; border-radius: 8px; }
 .busy { color: var(--warn); font-weight: 600; }
 .out-pre { margin-top: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }

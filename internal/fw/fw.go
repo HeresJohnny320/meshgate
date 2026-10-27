@@ -117,6 +117,37 @@ func RenderNFT(p Plan) string {
 		fwd = append(fwd, fmt.Sprintf("\t\tiifname %s drop", q(p.Iface)))
 	}
 
+	// Monitors: count, never accept or drop. They run after every filter
+	// (priority 300), so dropped packets are not counted, and match the
+	// connection's real server end (ct reply source: after DNAT).
+	var monIn, monOut, monFwd []string
+	for _, m := range p.Monitors {
+		cin, cout := CounterName("m", m.ID, "in"), CounterName("m", m.ID, "out")
+		counters = append(counters, cin, cout)
+		protos := m.Protos
+		if len(protos) == 0 {
+			protos = []string{""}
+		}
+		for _, proto := range protos {
+			var match []string
+			if proto != "" {
+				match = append(match, "meta l4proto "+proto)
+			}
+			if m.IP != "" {
+				match = append(match, "ct reply ip saddr "+m.IP)
+			}
+			if len(m.Ports) > 0 {
+				match = append(match, "ct reply proto-src { "+strings.Join(m.Ports, ", ")+" }")
+			}
+			for _, c := range [][2]string{{"original", cin}, {"reply", cout}} {
+				r := fmt.Sprintf("%s ct direction %s counter name %s comment %s", strings.Join(match, " "), c[0], q(c[1]), q("monitor: "+sanitize(m.Name)))
+				monIn = append(monIn, "\t\tiifname != \"lo\" "+r)
+				monOut = append(monOut, "\t\t"+r)
+				monFwd = append(monFwd, "\t\t"+r)
+			}
+		}
+	}
+
 	var b bytes.Buffer
 	b.WriteString("table inet meshgate\ndelete table inet meshgate\ntable inet meshgate {\n")
 	sort.Strings(counters)
@@ -148,6 +179,11 @@ func RenderNFT(p Plan) string {
 		chain("premark", "type filter hook prerouting priority mangle", mark)
 		chain("outmark", "type route hook output priority mangle",
 			[]string{fmt.Sprintf("\t\tct mark 0x%x meta mark set 0x%x", MarkPreserve, MarkPreserve)})
+	}
+	if len(p.Monitors) > 0 {
+		chain("monitor_in", "type filter hook input priority 300", monIn)
+		chain("monitor_out", "type filter hook output priority 300", monOut)
+		chain("monitor_fwd", "type filter hook forward priority 300", monFwd)
 	}
 	if p.Restricted {
 		chain("lan_in", "type filter hook input priority filter", in)

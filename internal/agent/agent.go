@@ -354,7 +354,7 @@ func (a *Agent) reconcile(ctx context.Context) {
 		plan := fw.Build(fw.Input{
 			Iface: a.Cfg.Iface, Network: netw, Self: self, Nodes: nodes,
 			Forwards: forwards, Routes: store.List[model.HTTPRoute](a.Store, model.KindRoute),
-			ACLs: store.List[model.ACL](a.Store, model.KindACL), PreserveEdge: cfg.DefaultViaPeer,
+			ACLs: store.List[model.ACL](a.Store, model.KindACL), Monitors: store.List[model.Monitor](a.Store, model.KindMonitor), PreserveEdge: cfg.DefaultViaPeer,
 			WGPort: listen, ProbePort: listen + probe.Offset, MeshPort: a.Cfg.MeshPort,
 			JoinPort: joinPort(a.Cfg.JoinListen), WebPort: webPort(a.Cfg.WebListen), WANIface: fw.DetectWAN(),
 			TestPort:    self.TestPort,

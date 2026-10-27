@@ -508,3 +508,58 @@ func TestHostOpen(t *testing.T) {
 		}
 	}
 }
+
+func TestMonitorCounters(t *testing.T) {
+	i := in(vps)
+	i.Monitors = []model.Monitor{
+		{ID: "mc", Name: "survival", Node: "vps", IP: "192.168.1.51", Proto: "tcp", Ports: "25566"},
+		{ID: "geyser", Name: "bedrock", Node: "vps", Proto: "both", Ports: "19132,25565-25570"},
+		{ID: "nas", Name: "nas", Node: "vps", IP: "192.168.1.0/24", Proto: "any"},
+		{ID: "elsewhere", Name: "home only", Node: "home", Proto: "tcp", Ports: "80"},
+	}
+	for _, m := range i.Monitors {
+		if err := m.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := RenderNFT(Build(i))
+	for _, want := range []string{
+		"\tcounter m_mc_in {\n\t}",
+		"type filter hook input priority 300",
+		`iifname != "lo" meta l4proto tcp ct reply ip saddr 192.168.1.51 ct reply proto-src { 25566 } ct direction original counter name "m_mc_in"`,
+		`meta l4proto udp ct reply proto-src { 19132, 25565-25570 } ct direction reply counter name "m_geyser_out"`,
+		`ct reply ip saddr 192.168.1.0/24 ct direction original counter name "m_nas_in"`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("missing %q in\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "m_elsewhere") {
+		t.Errorf("another node's monitor rendered here:\n%s", s)
+	}
+	// Counting only: monitor chains never accept or drop.
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, "monitor: ") && (strings.Contains(l, " accept") || strings.Contains(l, " drop")) {
+			t.Errorf("monitor rule changes the verdict: %s", l)
+		}
+	}
+	nftCheck(t, s)
+	if _, _, filter := RenderPF(Build(i)); strings.Contains(filter, "survival") {
+		t.Errorf("pf should ignore monitors:\n%s", filter)
+	}
+}
+
+func TestMonitorValidate(t *testing.T) {
+	for _, m := range []model.Monitor{
+		{Node: "vps", Proto: "tcp"},                     // nothing to match
+		{Node: "vps", Proto: "any", Ports: "80"},        // ports need tcp/udp
+		{Node: "vps", Proto: "tcp", IP: "nas.local"},    // not an IP
+		{Node: "vps", Proto: "tcp", Ports: "70000"},     // bad port
+		{Proto: "tcp", Ports: "80"},                     // no node
+		{Node: "vps", Proto: "icmp", IP: "192.168.1.1"}, // unsupported proto
+	} {
+		if m.Validate() == nil {
+			t.Errorf("%+v: expected an error", m)
+		}
+	}
+}

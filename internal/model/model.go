@@ -28,6 +28,7 @@ const (
 	KindAdmin     = "admin"     // web UI admin user(s)
 	KindACL       = "acl"       // access rules for traffic leaving the mesh
 	KindExitRoute = "exitroute" // a LAN device/subnet sent through an exit node
+	KindMonitor   = "monitor"   // traffic counter only: never routes or opens anything
 )
 
 // NodeKind separates infrastructure from roaming devices.
@@ -349,6 +350,58 @@ type ACL struct {
 	// Ports is "", "443", "8000-8100" or "80,443" (tcp/udp only).
 	Ports   string `json:"ports,omitempty"`
 	Enabled bool   `json:"enabled"`
+}
+
+// Monitor counts the traffic one server node carries to an IP, a port or
+// both, without changing how it is routed. It matches the real server end
+// of each connection (after any port forward's DNAT), so a proxy on a VPS
+// talking to a home server is counted as well as players reaching the
+// proxy. Linux nodes only (nft counters).
+type Monitor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Node measures: the server the traffic passes through or ends on.
+	Node string `json:"node"`
+	// IP is the server address or subnet; empty matches any.
+	IP    string `json:"ip,omitempty"`
+	Proto string `json:"proto"` // tcp, udp, both or any
+	// Ports is "", "25565", "25565-25570" or "80,443" (tcp/udp only).
+	Ports string `json:"ports,omitempty"`
+}
+
+// PortList splits Ports into single ports and ranges.
+func (m Monitor) PortList() []string { return ACL{Ports: m.Ports}.PortList() }
+
+// Validate checks a monitor.
+func (m Monitor) Validate() error {
+	if m.Node == "" {
+		return fmt.Errorf("pick the node that measures")
+	}
+	if m.IP == "" && m.Ports == "" {
+		return fmt.Errorf("give an IP, a port, or both")
+	}
+	if m.IP != "" {
+		if p, err := netip.ParsePrefix(m.IP); err != nil || !p.Addr().Is4() {
+			if ip, err := netip.ParseAddr(m.IP); err != nil || !ip.Is4() {
+				return fmt.Errorf("IP must be an IPv4 address or a subnet like 192.168.1.0/24")
+			}
+		}
+	}
+	switch m.Proto {
+	case "tcp", "udp", "both", "any":
+	default:
+		return fmt.Errorf("protocol must be tcp, udp, both or any")
+	}
+	if m.Ports != "" && m.Proto == "any" {
+		return fmt.Errorf("ports need protocol tcp, udp or both")
+	}
+	for _, p := range m.PortList() {
+		lo, hi, isRange := strings.Cut(p, "-")
+		if !portStr(lo) || (isRange && (!portStr(hi) || atoi(hi) < atoi(lo))) {
+			return fmt.Errorf("bad port %q", p)
+		}
+	}
+	return nil
 }
 
 // ToSelf is the ACL destination meaning "the enforcing node itself".

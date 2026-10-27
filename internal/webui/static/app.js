@@ -192,6 +192,9 @@ function histLabels(h) {
         target_port: String(r.target_port), target_node: nodeName(r.target_node), node: nodeName(r.edge_node) };
     }
   }
+  for (const { value: m } of view.monitors || []) {
+    L["m:" + m.id] = { ...L["m:" + m.id], kind: "monitor", name: m.name, proto: m.proto, port: m.ports || "", target_ip: m.ip || "", node: nodeName(m.node) };
+  }
   for (const k of Object.keys(h.series || {})) {
     if (k.startsWith("d:") && !L[k]) { const [peer, by] = k.slice(2).split("@"); L[k] = { kind: "link", peer: nodeName(peer), node: nodeName(by) }; }
   }
@@ -204,6 +207,7 @@ function seriesName(k, l = {}) {
   if (k.startsWith("f:")) return `${l.name || "forward"} (${l.proto || "?"} ${l.port || "?"}${tgt})`;
   if (k.startsWith("r:") || k.startsWith("h:")) return `${k[0] === "r" ? "https" : "http"}://${l.hostname || "?"}${tgt}`;
   if (k.startsWith("d:")) return `${l.peer || "?"} ↔ ${l.node || "?"}`;
+  if (k.startsWith("m:")) return `${l.name || "monitor"} (${monitorMatch({ proto: l.proto || "?", ip: l.target_ip, ports: l.port })} on ${l.node || "?"})`;
   return k;
 }
 
@@ -212,12 +216,12 @@ function histGroups(h) {
   const L = histLabels(h), live = new Set(Object.keys(L));
   const keys = [...new Set([...Object.keys(h.series || {}), ...[...live].filter((k) => !k.startsWith("d:"))])].sort();
   const current = new Set([...(view.forwards || []).map((x) => "f:" + x.value.id),
-    ...(view.routes || []).flatMap((x) => ["r:" + x.value.id, "h:" + x.value.id])]);
+    ...(view.routes || []).flatMap((x) => ["r:" + x.value.id, "h:" + x.value.id]), ...(view.monitors || []).map((x) => "m:" + x.value.id)]);
   const gone = (k) => (current.has(k) || k.startsWith("d:") ? "" : " (deleted)");
-  const out = [{ value: "all", label: "Everything (all forwards and sites)", keys: keys.filter((k) => !k.startsWith("d:")), section: "" }];
+  const out = [{ value: "all", label: "Everything (all forwards and sites)", keys: keys.filter((k) => !k.startsWith("d:") && !k.startsWith("m:")), section: "" }];
   const add = (section, value, label, ks) => out.push({ section, value, label, keys: ks });
   const by = (f) => { const m = {}; for (const k of keys) { const v = f(k); if (v) (m[v] ||= []).push(k); } return m; };
-  const ips = by((k) => !k.startsWith("d:") && L[k]?.target_ip);
+  const ips = by((k) => !k.startsWith("d:") && !k.startsWith("m:") && L[k]?.target_ip);
   for (const ip of Object.keys(ips).sort()) add("Per target IP", "ip:" + ip, ip, ips[ip]);
   const ports = by((k) => (k.startsWith("f:") || k.startsWith("r:") || k.startsWith("h:")) && L[k]?.port && `${L[k].port}`);
   for (const p of Object.keys(ports).sort((a, b) => parseInt(a, 10) - parseInt(b, 10))) add("Per public port", "port:" + p, "Port " + p, ports[p]);
@@ -225,6 +229,7 @@ function histGroups(h) {
   for (const n of Object.keys(nodes).sort()) add("Per node (all its WireGuard links)", "node:" + n, n, nodes[n]);
   for (const k of keys.filter((k) => k.startsWith("f:"))) add("Port forwards", k, seriesName(k, L[k]) + gone(k), [k]);
   for (const k of keys.filter((k) => k.startsWith("r:") || k.startsWith("h:"))) add("Sites (HTTPS and HTTP)", k, seriesName(k, L[k]) + gone(k), [k]);
+  for (const k of keys.filter((k) => k.startsWith("m:"))) add("Monitors", k, seriesName(k, L[k]) + gone(k), [k]);
   for (const k of keys.filter((k) => k.startsWith("d:"))) add("Device links", k, seriesName(k, L[k]), [k]);
   out.labels = L;
   return out;
@@ -526,7 +531,7 @@ const empty = (cols, text) => `<tr><td colspan="${cols}" class="empty">${text}</
 async function refreshTraffic() {
   if (!view) return;
   const reports = await api("/api/traffic");
-  const fwd = {}, routes = {}, rules = {}, recent = [], devices = [];
+  const fwd = {}, routes = {}, rules = {}, recent = [], devices = [], mons = {};
   const add = (m, id, r) => {
     const t = (m[id] ||= { in: 0, out: 0, in_rate: 0, out_rate: 0, requests: 0, errors: 0, req_rate: 0 });
     for (const k in t) t[k] += r[k] || 0;
@@ -534,6 +539,7 @@ async function refreshTraffic() {
   for (const t of reports) {
     for (const [id, r] of Object.entries(t.forwards || {})) add(fwd, id, r);
     for (const [id, r] of Object.entries(t.routes || {})) add(routes, id, r);
+    for (const [id, r] of Object.entries(t.monitors || {})) add(mons, id, r);
     for (const [id, n] of Object.entries(t.acls || {})) rules[id] = (rules[id] || 0) + n;
     for (const [id, r] of Object.entries(t.peers || {})) devices.push({ by: t.node, peer: id, ...r });
     recent.push(...(t.recent || []));
@@ -592,6 +598,15 @@ async function refreshTraffic() {
   $("#traffic-devices").innerHTML = `<tr><th>Device</th><th>Link</th><th>Received</th><th>Sent</th><th>Total</th></tr>` +
     (devices.map((d) => `<tr><td><b>${esc(nodeName(d.peer))}</b></td><td>${esc(nodeName(d.peer))} ↔ ${esc(nodeName(d.by))}</td>
       <td>${rate(d.out_rate)}</td><td>${rate(d.in_rate)}</td><td>${bytes(d.in + d.out)}</td></tr>`).join("") || empty(5, "No traffic yet"));
+
+  $("#traffic-monitors").innerHTML = `<tr><th>Monitor</th><th>Measured on</th><th>Matches</th><th>To it</th><th>From it</th><th>Total</th><th></th></tr>` +
+    ((view.monitors || []).map(({ value: m }) => {
+      const r = mons[m.id] || {};
+      return `<tr><td><b>${esc(m.name)}</b></td><td>${esc(nodeName(m.node))}</td><td class="mono">${esc(monitorMatch(m))}</td>
+        <td>${rate(r.in_rate)}</td><td>${rate(r.out_rate)}</td><td>${bytes((r.in || 0) + (r.out || 0))}</td>
+        <td class="actions"><button class="small" data-edit-mon="${esc(m.id)}">Edit</button>
+        <button class="small danger" data-del="monitor:${esc(m.id)}">Delete</button></td></tr>`;
+    }).join("") || empty(7, "No monitors yet"));
 
   $("#traffic-rules").innerHTML = `<tr><th>Rule</th><th>Enforced on</th><th>Connections allowed</th></tr>` +
     ((view.acls || []).map(({ value: a }) => `<tr><td><b>${esc(a.name)}</b></td><td>${esc(nodeName(a.node))}</td><td>${rules[a.id] || 0}</td></tr>`).join("")
@@ -875,6 +890,29 @@ function aclDialog(it) {
   $("#acl-node").addEventListener("change", (e) => { toSel.innerHTML = targets(e.target.value); sync(); });
 }
 
+// monitorMatch: "tcp 192.168.1.51:25566", "any 10.0.0.0/24", "udp port 19132".
+const monitorMatch = (m) => `${m.proto === "both" ? "tcp+udp" : m.proto} ${m.ip ? m.ip + (m.ports ? ":" + m.ports : "") : "port " + m.ports}`;
+
+function monitorDialog(it) {
+  const m = it?.value || { proto: "tcp", node: view.self_id };
+  openDialog(it ? "Edit monitor" : "New monitor", `<div class="form-grid">
+    <label class="full">Name <input name="name" value="${esc(m.name)}" placeholder="survival server"></label>
+    <label class="full">Measured on (the server the traffic passes through, e.g. the VPS running your proxy)
+      <select name="node">${nodeOptions(servers(), m.node)}</select></label>
+    <label>IP or subnet (empty = any) <input name="ip" value="${esc(m.ip)}" placeholder="192.168.1.51"></label>
+    <label>Ports (empty = all) <input name="ports" value="${esc(m.ports)}" placeholder="25565 or 25565-25570"></label>
+    <label>Protocol <select name="proto">${[["tcp", "tcp"], ["udp", "udp"], ["both", "tcp + udp"], ["any", "any (IP only)"]]
+      .map(([v, l]) => `<option value="${v}" ${v === m.proto ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <p class="hint full">Counts connections whose server end is this IP and/or port: traffic from this node to it,
+      through this node to it, or to this node on that port. After a port forward, the forward's target counts.</p></div>`,
+  async (fd) => {
+    await api("/api/monitor", { scope: "cluster", monitor: {
+      id: m.id || "", name: fd.get("name"), node: fd.get("node"), ip: fd.get("ip").trim(),
+      ports: fd.get("ports").trim(), proto: fd.get("proto") } });
+    refreshTraffic().catch(() => {});
+  });
+}
+
 function renderTokens() {
   const rows = (view.tokens || []).map((t) => `<tr><td class="mono">${esc(t.id)}</td><td>${esc(t.kind)}</td><td>${esc(t.note)}</td>
     <td>${t.uses_left < 0 ? "unlimited" : t.uses_left}</td><td>${t.expires_at ? new Date(t.expires_at * 1000).toLocaleString() : "never"}</td>
@@ -1012,6 +1050,8 @@ document.addEventListener("click", async (e) => {
   if (t.id === "fwd-new") return forwardDialog();
   if (t.id === "route-new") return routeDialog();
   if (t.id === "acl-new") return aclDialog();
+  if (t.id === "monitor-new") return monitorDialog();
+  if (t.dataset.editMon) return monitorDialog(view.monitors.find((x) => x.value.id === t.dataset.editMon));
   if (t.dataset.editAcl) return aclDialog(view.acls.find((x) => x.value.id === t.dataset.editAcl));
   if (t.id === "exit-new") return exitRouteDialog();
   if (t.dataset.editExit) return exitRouteDialog(view.exit_routes.find((x) => x.value.id === t.dataset.editExit));
@@ -1052,8 +1092,8 @@ document.addEventListener("click", async (e) => {
   }
   if (t.dataset.del) {
     const [kind, id] = t.dataset.del.split(":");
-    if (!confirm(`Delete this ${{ httproute: "route", acl: "rule", exitroute: "exit route" }[kind] || kind}? This applies to all nodes.`)) return;
-    try { await api("/api/delete", { kind, id, scope: "cluster" }); refresh(); toast("Deleted"); } catch (err) { toast(err.message); }
+    if (!confirm(`Delete this ${{ httproute: "route", acl: "rule", exitroute: "exit route", monitor: "monitor" }[kind] || kind}? This applies to all nodes.`)) return;
+    try { await api("/api/delete", { kind, id, scope: "cluster" }); refresh(); if (kind === "monitor") refreshTraffic().catch(() => {}); toast("Deleted"); } catch (err) { toast(err.message); }
   }
 });
 

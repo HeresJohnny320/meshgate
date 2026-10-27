@@ -85,6 +85,7 @@ type View struct {
 	Routes     []Item[model.HTTPRoute] `json:"routes"`
 	ACLs       []Item[model.ACL]       `json:"acls"`
 	ExitRoutes []Item[model.ExitRoute] `json:"exit_routes"`
+	Monitors   []Item[model.Monitor]   `json:"monitors"`
 	Tokens     []model.Token           `json:"tokens"`
 	Statuses   map[string]model.Status `json:"statuses"`
 	Runtime    Runtime                 `json:"runtime"`
@@ -99,6 +100,7 @@ func (s *Service) View() View {
 	v.Routes = items[model.HTTPRoute](s.Store, model.KindRoute)
 	v.ACLs = items[model.ACL](s.Store, model.KindACL)
 	v.ExitRoutes = items[model.ExitRoute](s.Store, model.KindExitRoute)
+	v.Monitors = items[model.Monitor](s.Store, model.KindMonitor)
 	for _, t := range store.List[model.Token](s.Store, model.KindToken) {
 		t.SecretHash = ""
 		v.Tokens = append(v.Tokens, t)
@@ -110,6 +112,7 @@ func (s *Service) View() View {
 	sort.Slice(v.Forwards, func(i, j int) bool { return v.Forwards[i].Value.Name < v.Forwards[j].Value.Name })
 	sort.Slice(v.Routes, func(i, j int) bool { return v.Routes[i].Value.Hostname < v.Routes[j].Value.Hostname })
 	sort.Slice(v.ACLs, func(i, j int) bool { return v.ACLs[i].Value.Name < v.ACLs[j].Value.Name })
+	sort.Slice(v.Monitors, func(i, j int) bool { return v.Monitors[i].Value.Name < v.Monitors[j].Value.Name })
 	if s.Runtime != nil {
 		v.Runtime = s.Runtime()
 	}
@@ -511,6 +514,32 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	return n, err
 }
 
+// PutMonitor creates or updates a traffic monitor. It only counts: nothing
+// is routed, opened or blocked because of it.
+func (s *Service) PutMonitor(m model.Monitor, scope store.Scope) (model.Monitor, error) {
+	if err := s.requireWriter(); err != nil {
+		return m, err
+	}
+	if m.ID == "" {
+		m.ID = join.RandomID()
+	}
+	m.Name, m.IP, m.Ports = strings.TrimSpace(m.Name), strings.TrimSpace(m.IP), strings.TrimSpace(m.Ports)
+	if m.Name == "" {
+		m.Name = strings.Trim(m.IP+":"+m.Ports, ":")
+	} else if err := model.CheckName(m.Name); err != nil {
+		return m, err
+	}
+	if err := m.Validate(); err != nil {
+		return m, err
+	}
+	n, ok := store.Get[model.Node](s.Store, model.Key(model.KindNode, m.Node))
+	if !ok || n.Kind != model.NodeServer {
+		return m, errors.New("traffic is measured on server nodes; pick one")
+	}
+	_, err := s.Store.Put(model.Key(model.KindMonitor, m.ID), m, scope)
+	return m, err
+}
+
 // RemoveNode deletes a node from the mesh, along with forwards that use it.
 func (s *Service) RemoveNode(id string) error {
 	if err := s.requireWriter(); err != nil {
@@ -532,6 +561,11 @@ func (s *Service) RemoveNode(id string) error {
 	for _, a := range store.List[model.ACL](s.Store, model.KindACL) {
 		if a.Node == id {
 			s.Store.Delete(model.Key(model.KindACL, a.ID), store.Cluster)
+		}
+	}
+	for _, m := range store.List[model.Monitor](s.Store, model.KindMonitor) {
+		if m.Node == id {
+			s.Store.Delete(model.Key(model.KindMonitor, m.ID), store.Cluster)
 		}
 	}
 	s.Store.Delete(model.Key(model.KindStatus, id), store.Cluster)
@@ -736,6 +770,16 @@ func (s *Service) Handler(prefix string) http.Handler {
 		}
 		return s.PutACL(b.ACL, scopeOf(b.Scope))
 	})
+	route("POST monitor", func(r *http.Request) (any, error) {
+		var b struct {
+			Monitor model.Monitor `json:"monitor"`
+			Scope   store.Scope   `json:"scope"`
+		}
+		if err := decode(r, &b); err != nil {
+			return nil, err
+		}
+		return s.PutMonitor(b.Monitor, scopeOf(b.Scope))
+	})
 	route("POST node", func(r *http.Request) (any, error) {
 		var b struct {
 			ID    string      `json:"id"`
@@ -762,7 +806,7 @@ func (s *Service) Handler(prefix string) http.Handler {
 		switch b.Kind {
 		case model.KindNode:
 			return nil, s.RemoveNode(b.ID)
-		case model.KindForward, model.KindRoute, model.KindToken, model.KindACL, model.KindExitRoute:
+		case model.KindForward, model.KindRoute, model.KindToken, model.KindACL, model.KindExitRoute, model.KindMonitor:
 			_, err := s.Store.Delete(model.Key(b.Kind, b.ID), scopeOf(b.Scope))
 			return map[string]bool{"ok": true}, err
 		}

@@ -30,6 +30,16 @@ const (
 	TableUnderlay = 51824  // MarkBypass sockets: real interfaces only, never another VPN
 )
 
+// Monitor is a traffic counter for connections whose server end matches
+// IP and/or Ports.
+type Monitor struct {
+	ID     string
+	Name   string
+	IP     string   // "" = any
+	Protos []string // nil = any protocol
+	Ports  []string // "25565", "25565-25570"
+}
+
 // Input describes what this node needs.
 type Input struct {
 	Iface    string
@@ -39,6 +49,7 @@ type Input struct {
 	Forwards []model.Forward
 	Routes   []model.HTTPRoute
 	ACLs     []model.ACL
+	Monitors []model.Monitor
 	// PreserveEdge is the edge whose real-client-IP traffic we accept
 	// (meshcfg.Config.DefaultViaPeer). Empty disables reply handling.
 	PreserveEdge string
@@ -93,6 +104,8 @@ type Plan struct {
 	Mesh     string
 	WANIface string
 	DNAT     []DNAT
+	// Monitors only count traffic (Linux).
+	Monitors []Monitor
 	// Blocked are public ports of disabled forwards: dropped so that
 	// turning a forward off really shuts the port.
 	Blocked []DNAT
@@ -178,6 +191,16 @@ func Build(in Input) Plan {
 	byID := map[string]model.Node{}
 	for _, n := range in.Nodes {
 		byID[n.ID] = n
+	}
+	for _, m := range in.Monitors {
+		if m.Node != in.Self.ID || m.Validate() != nil {
+			continue
+		}
+		mon := Monitor{ID: m.ID, Name: m.Name, IP: m.IP, Ports: m.PortList()}
+		if m.Proto != "any" {
+			mon.Protos = protos(model.Proto(m.Proto))
+		}
+		p.Monitors = append(p.Monitors, mon)
 	}
 	targetAddr := func(nodeID, ip string) (string, bool) {
 		if ip != "" {

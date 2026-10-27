@@ -52,5 +52,6 @@ type Node struct {
 	Routes   map[string]Route  `json:"routes"`   // HTTPS route ID (this node is the edge)
 	ACLs     map[string]uint64 `json:"acls"`     // access rule ID -> connections allowed
 	Peers    map[string]Rate   `json:"peers"`    // node ID -> WireGuard traffic with that device
+	Monitors map[string]Rate   `json:"monitors"` // monitor ID (this node measures)
 	Recent   []Request         `json:"recent"`   // newest last
 }

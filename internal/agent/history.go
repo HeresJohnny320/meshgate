@@ -47,6 +47,9 @@ func (a *Agent) sampleHistory() {
 			max(0, r.InRate-r.HTTP.InRate), max(0, r.OutRate-r.HTTP.OutRate))
 		a.hist.acc.Sample("h:"+id, r.HTTP.In, r.HTTP.Out, r.HTTP.InRate, r.HTTP.OutRate)
 	}
+	for id, r := range t.Monitors {
+		a.hist.acc.Sample("m:"+id, r.In, r.Out, r.InRate, r.OutRate)
+	}
 	for id, r := range t.Peers {
 		a.hist.acc.Sample("d:"+id+"@"+a.Cfg.NodeID, r.In, r.Out, r.InRate, r.OutRate)
 	}
@@ -93,6 +96,12 @@ func (a *Agent) historyLabels() map[string]history.Label {
 			l[k[0]+r.ID] = history.Label{"kind": k[1], "hostname": strings.ToLower(r.Hostname), "port": k[2],
 				"target_ip": target(r.TargetIP, r.TargetNode), "target_port": strconv.Itoa(r.TargetPort),
 				"target_node": name(r.TargetNode), "node": name(self)}
+		}
+	}
+	for _, m := range store.List[model.Monitor](a.Store, model.KindMonitor) {
+		if m.Node == self {
+			l["m:"+m.ID] = history.Label{"kind": "monitor", "name": m.Name, "proto": m.Proto, "port": m.Ports,
+				"target_ip": m.IP, "node": name(self)}
 		}
 	}
 	for id, n := range nodes {
