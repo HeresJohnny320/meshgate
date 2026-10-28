@@ -222,7 +222,7 @@ func cmdLeave(cfgPath string, args []string) error {
 		}
 	}
 	stopService()
-	wg.DestroyInterface(cfg.Iface)
+	wg.Teardown(cfg.Iface)
 	fw.Remove()
 	hostfw.RemoveAll(cfg.HostFirewallStatePath())
 	os.RemoveAll(cfg.DataDir)

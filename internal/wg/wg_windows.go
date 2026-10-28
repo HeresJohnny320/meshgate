@@ -27,6 +27,7 @@ type Manager struct {
 	Iface     string
 	Key       wgtypes.Key
 	Userspace bool
+	Created   bool // always: the adapter ends with the process
 
 	mu      sync.Mutex
 	dev     *device.Device
@@ -37,7 +38,7 @@ type Manager struct {
 
 // New creates a manager; call Up before Apply.
 func New(iface string, key wgtypes.Key) *Manager {
-	return &Manager{Iface: iface, Key: key, Userspace: true}
+	return &Manager{Iface: iface, Key: key, Userspace: true, Created: true}
 }
 
 // Up creates the Wintun adapter and starts WireGuard.
@@ -153,6 +154,12 @@ func hexToB64(h string) string {
 	copy(k[:], b)
 	return k.String()
 }
+
+// Release ends the adapter with the process (Wintun cannot outlive it).
+func (m *Manager) Release() { m.Down() }
+
+// Teardown: nothing outlives meshgate on Windows.
+func Teardown(string) {}
 
 // Ensure is a no-op: the Wintun adapter belongs to this process.
 func (m *Manager) Ensure(bool) (bool, error) { return false, nil }

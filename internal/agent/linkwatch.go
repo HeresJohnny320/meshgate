@@ -2,10 +2,14 @@ package agent
 
 import (
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/pathsel"
+	"github.com/heresjohnny320/meshgate/internal/probe"
 	"github.com/heresjohnny320/meshgate/internal/wg"
 )
 
@@ -121,4 +125,20 @@ func linkState(st wg.PeerStat, probesOK bool, now time.Time, running time.Durati
 		msg += "; it does not answer probes either (offline, or the path to it is blocked)"
 	}
 	return msg, true
+}
+
+// tunnelID names this node's WireGuard interface instance for the probes'
+// boot ID. Peers drop their sessions with us when it changes, so it changes
+// only when the interface (and its sessions) is new, not when meshgate merely
+// restarted and took over the running one.
+func (a *Agent) tunnelID(created bool) string {
+	path := filepath.Join(a.Cfg.DataDir, "tunnel-id")
+	if !created {
+		if b, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	id := probe.NewBootID()
+	os.WriteFile(path, []byte(id+"\n"), 0o600)
+	return id
 }

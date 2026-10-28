@@ -32,6 +32,7 @@ type Manager struct {
 	Iface     string
 	Key       wgtypes.Key
 	Userspace bool
+	Created   bool // see the Linux Manager
 
 	mu     sync.Mutex
 	up     bool
@@ -60,7 +61,9 @@ func (m *Manager) Up(forceUserspace bool) error {
 	if _, err := exec.LookPath("wg"); err != nil {
 		return errors.New("the `wg` tool is missing: pkg install wireguard-tools")
 	}
-	if _, err := net.InterfaceByName(m.Iface); err != nil {
+	_, err := net.InterfaceByName(m.Iface)
+	m.Created = err != nil
+	if err != nil {
 		kernelErr := errors.New("userspace forced")
 		if !forceUserspace {
 			kernelErr = m.createKernel()
@@ -107,7 +110,11 @@ func (m *Manager) Ensure(forceUserspace bool) (recreated bool, err error) {
 	}
 	m.up, m.Userspace, m.routes = false, false, map[netip.Prefix]bool{}
 	m.mu.Unlock()
-	return true, m.Up(forceUserspace)
+	if err := m.Up(forceUserspace); err != nil {
+		return true, err
+	}
+	m.Created = true
+	return true, nil
 }
 
 func (m *Manager) createKernel() error {
@@ -296,10 +303,27 @@ func (m *Manager) Stats() map[string]PeerStat {
 // SyncUnderlay is Linux only for now.
 func (m *Manager) SyncUnderlay() {}
 
+// Release lets go of the interface when meshgate exits; a kernel interface
+// keeps running (see the Linux version).
+func (m *Manager) Release() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dev != nil {
+		m.down0()
+	}
+}
+
+// Teardown destroys the interface (meshgate stop).
+func Teardown(iface string) { DestroyInterface(iface) }
+
 // Down destroys the interface.
 func (m *Manager) Down() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.down0()
+}
+
+func (m *Manager) down0() {
 	if m.uapi != nil {
 		m.uapi.Close()
 	}

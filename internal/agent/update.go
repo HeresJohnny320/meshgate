@@ -127,6 +127,7 @@ func (a *Agent) startSelfUpdate() (string, error) {
 			return
 		}
 		log.Printf("updated %s -> %s; restarting", Version, tag)
+		a.flushEvents()         // the log server should know why we vanish
 		time.Sleep(time.Second) // let the API answer go out
 		os.Exit(3)              // systemd / daemon -r / Windows recovery start the new binary
 	}()

@@ -163,8 +163,32 @@ func TestParityTabs(t *testing.T) {
 	}
 	key("i")
 	key("f")
-	if !m.logAll || m.logNode != "a" || !strings.Contains(m.logsQuery(), "important=0") || !strings.Contains(m.logsQuery(), "node=a") {
-		t.Fatalf("filters: all=%v node=%q q=%s", m.logAll, m.logNode, m.logsQuery())
+	if !m.logImp || m.logNode != "a" || !strings.Contains(m.logsQuery(), "important=1") || !strings.Contains(m.logsQuery(), "node=a") {
+		t.Fatalf("filters: important=%v node=%q q=%s", m.logImp, m.logNode, m.logsQuery())
+	}
+
+	// B: one node's full log file, newest first, searchable.
+	m.logNode, m.logText = "", ""
+	key("b")
+	if !m.logFile || !strings.Contains(m.rawQuery(), "node=a") {
+		t.Fatalf("file view: %v %s", m.logFile, m.rawQuery())
+	}
+	m.raw = &rawResp{Node: "a", Source: "journalctl -u meshgate", Lines: []string{
+		"Oct 27 18:49:50 systemd[1]: Stopping meshgate.service", "Oct 27 18:49:53 meshgate v0.2.28: node vps", "Oct 27 18:50:01 http: TLS handshake error"}}
+	if rows := m.rawRows(); len(rows) != 3 || !strings.Contains(rows[0], "TLS") {
+		t.Fatalf("raw rows: %v", rows)
+	}
+	m.logText = "meshgate"
+	if rows := m.rawRows(); len(rows) != 2 {
+		t.Fatalf("search: %v", rows)
+	}
+	key("f") // a file belongs to one node: never "all"
+	if m.logNode == "" {
+		t.Fatal("file view switched to all nodes")
+	}
+	key("b")
+	if m.logFile {
+		t.Fatal("B did not go back to the event log")
 	}
 
 	// NODES: detected subnets skip what is shared and container bridges.

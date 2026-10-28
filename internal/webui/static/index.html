@@ -181,16 +181,20 @@
           cannot reach it keeps its lines in RAM and delivers them once it can; open that node's dashboard (or
           <code>meshgate tui</code> there) to read them meanwhile.</p>
         <form id="logs-form" class="logs-bar">
+          <label>Show <select name="mode">
+            <option value="events">Event log (all nodes)</option>
+            <option value="file">Full log file of a node</option></select></label>
           <label>Node <select name="node"><option value="">All nodes</option></select></label>
-          <label>Period <select name="since">
+          <label class="ev-only">Period <select name="since">
             <option value="3600">Last hour</option><option value="86400" selected>Last day</option>
             <option value="604800">Last week</option><option value="0">Everything kept</option></select></label>
           <label>Search <input name="q" placeholder="DOWN, pfsense, TLS…"></label>
-          <label class="inline"><input type="checkbox" name="important" checked> Important only</label>
+          <label class="inline ev-only"><input type="checkbox" name="important"> Important only</label>
         </form>
         <p class="hint" id="logs-info"></p>
         <div id="logs-pending"></div>
         <div class="table-wrap"><table id="logs"></table></div>
+        <pre id="logs-file" class="card out-pre hidden"></pre>
       </section>
 
       <section id="tab-changelog" class="hidden">

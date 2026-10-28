@@ -110,11 +110,16 @@ const logRow = (e, ram) => `<tr${ram ? ' class="busy"' : ""}><td class="when mon
   <td>${esc(nodeName(e.node))}${ram ? ' <span class="chip local">in RAM</span>' : ""}</td><td class="mono wrap">${esc(e.text)}</td></tr>`;
 
 async function loadLogs() {
-  const f = $("#logs-form");
+  const f = $("#logs-form"), file = f.mode.value === "file";
   const sel = f.node, keep = sel.value;
-  sel.innerHTML = '<option value="">All nodes</option>' + view.nodes.filter((n) => n.value.kind === "server")
+  sel.innerHTML = (file ? "" : '<option value="">All nodes</option>') + view.nodes.filter((n) => n.value.kind === "server")
     .map((n) => `<option value="${esc(n.value.id)}">${esc(n.value.name)}</option>`).join("");
-  sel.value = keep;
+  sel.value = keep || (file ? view.self_id : "");
+  if (!sel.value && file) sel.value = view.self_id;
+  document.querySelectorAll("#logs-form .ev-only").forEach((x) => x.classList.toggle("hidden", file));
+  $("#logs").classList.toggle("hidden", file);
+  $("#logs-file").classList.toggle("hidden", !file);
+  if (file) return loadLogFile(sel.value, f.q.value.trim().toLowerCase());
   const span = parseInt(f.since.value, 10);
   // Fixed order: the pfSense GUI's proxy only passes this exact query.
   const q = `since=${span ? Math.floor(Date.now() / 1000) - span : ""}&node=${encodeURIComponent(sel.value)}` +
@@ -135,6 +140,20 @@ async function loadLogs() {
     (rows.join("") || empty(3, f.important.checked ? "Nothing important in this period. Untick Important only to see everything." : "No log lines in this period"));
   labelTables();
 }
+// loadLogFile shows one server's own log (journal / log file), crashes and
+// service stop/start messages included, newest at the bottom.
+async function loadLogFile(node, text) {
+  const out = $("#logs-file"), atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 20;
+  // Fixed order: the pfSense GUI's proxy only passes this exact query.
+  const r = await api(`/api/rawlog?node=${encodeURIComponent(node)}&n=1000`);
+  const lines = (r.lines || []).filter((l) => !text || l.toLowerCase().includes(text));
+  $("#logs-pending").innerHTML = "";
+  $("#logs-info").innerHTML = r.error ? `<span class="busy">${esc(r.error)}</span>`
+    : `${esc(nodeName(r.node))}: <code>${esc(r.source)}</code>, last ${(r.lines || []).length} lines${text ? `, ${lines.length} matching` : ""}`;
+  out.textContent = lines.join("\n") || (r.error ? "" : "No lines.");
+  if (atEnd) out.scrollTop = out.scrollHeight;
+}
+
 $("#logs-form").addEventListener("change", () => loadLogs().catch((err) => toast(err.message)));
 $("#logs-form").addEventListener("submit", (e) => { e.preventDefault(); loadLogs().catch((err) => toast(err.message)); });
 let logsTyping = null;

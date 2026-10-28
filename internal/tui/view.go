@@ -138,6 +138,12 @@ func (m *model_) listView(width int) string {
 		for i := start; i < end; i++ {
 			body = append(body, line(width, m.toolLine(rows[i], i == m.sel)))
 		}
+	case m.tab == tabLogs && m.logFile:
+		rows := m.rawRows()
+		start, end := window(m.sel, n, max(1, available))
+		for i := start; i < end; i++ {
+			body = append(body, line(width, m.rawLine(rows[i], i == m.sel, width)))
+		}
 	case m.tab == tabLogs:
 		rows := m.logRows()
 		start, end := window(m.sel, n, max(1, available))
@@ -213,6 +219,9 @@ func (m *model_) tabHint() string {
 	case tabTools:
 		return "connectivity checks from this node"
 	case tabLogs:
+		if m.logFile {
+			return m.rawHint()
+		}
 		return m.logsHint()
 	case tabSettings:
 		return "mesh-wide settings and the web UI's certificates"
@@ -233,7 +242,13 @@ func (m *model_) emptyText() string {
 	case tabExits:
 		return "No exit routes. Press A to send a LAN device (e.g. 192.168.200.11) out through an exit node."
 	case tabLogs:
-		if !m.logAll {
+		if m.logFile {
+			if m.raw != nil && m.raw.Error != "" {
+				return m.raw.Error
+			}
+			return "No lines (yet)."
+		}
+		if m.logImp {
 			return "Nothing important in this period. Press I to see every line, V for a longer period."
 		}
 		return "No log lines in this period."
@@ -258,7 +273,11 @@ func (m *model_) footer(width int) string {
 	case tabTools:
 		keys = append(keys, key{"ENTER", "run"})
 	case tabLogs:
-		keys = append(keys, key{"ENTER", "full line"}, key{"I", "important/all"}, key{"F", "node"}, key{"V", "period"}, key{"/", "search"})
+		if m.logFile {
+			keys = append(keys, key{"ENTER", "full line"}, key{"F", "node"}, key{"/", "search"}, key{"B", "event log"})
+		} else {
+			keys = append(keys, key{"ENTER", "full line"}, key{"I", "important/all"}, key{"F", "node"}, key{"V", "period"}, key{"/", "search"}, key{"B", "a node's full log file"})
+		}
 	case tabSettings:
 		keys = append(keys, key{"ENTER", "change / show"})
 	case tabForwards, tabHTTPS, tabRules, tabExits:

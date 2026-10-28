@@ -71,6 +71,7 @@ type viewMsg struct {
 	traffic []traffic.Node
 	live    bool // traffic was fetched (TRAFFIC tab, live view)
 	logs    *logsResp
+	raw     *rawResp
 }
 
 // diagMsg is the result of a check started on the TOOLS tab.
@@ -107,10 +108,12 @@ type model_ struct {
 	// LOGS tab: the answer and its filters.
 	logs    *logsResp
 	logErr  string
-	logAll  bool // false: important lines only
+	logImp  bool // important lines only (default: every line)
 	logNode string
 	logText string
-	logSpan int // index into logSpans
+	logSpan int  // index into logSpans
+	logFile bool // B: one node's full log file instead of the event log
+	raw     *rawResp
 }
 
 // Run starts the TUI.
@@ -129,11 +132,18 @@ func tick() tea.Cmd {
 }
 
 func (m *model_) load() tea.Cmd {
-	tab, rng, hist, logQ := m.tab, m.histRange, m.history, m.logsQuery()
+	tab, rng, hist, logQ, file, rawQ := m.tab, m.histRange, m.history, m.logsQuery(), m.logFile, m.rawQuery()
 	return func() tea.Msg {
 		v, err := m.api.View()
 		msg := viewMsg{v: v, err: err}
-		if tab == tabLogs && err == nil {
+		if tab == tabLogs && file && err == nil {
+			var r rawResp
+			if rerr := m.api.Get(rawQ, &r); rerr != nil {
+				r.Error = rerr.Error()
+			}
+			msg.raw = &r
+		}
+		if tab == tabLogs && !file && err == nil {
 			var l logsResp
 			if lerr := m.api.Get(logQ, &l); lerr != nil {
 				l.Error = lerr.Error()
@@ -173,6 +183,9 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.logs != nil {
 			m.logs = msg.logs
+		}
+		if msg.raw != nil {
+			m.raw = msg.raw
 		}
 		if n := m.rows(); m.sel >= n {
 			m.sel = max(0, n-1)
@@ -256,9 +269,14 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "t", " ":
 		m.toggleItem()
 		return m, m.load()
+	case "b":
+		if m.tab == tabLogs {
+			m.logFile, m.sel, m.raw = !m.logFile, 0, nil
+			return m, m.load()
+		}
 	case "i":
 		if m.tab == tabLogs {
-			m.logAll, m.sel = !m.logAll, 0
+			m.logImp, m.sel = !m.logImp, 0
 			return m, m.load()
 		}
 	case "f":
@@ -426,6 +444,9 @@ func (m *model_) rows() int {
 	case tabTools:
 		return len(m.toolRows())
 	case tabLogs:
+		if m.logFile {
+			return len(m.rawRows())
+		}
 		return len(m.logRows())
 	case tabSettings:
 		return len(m.settingRows())
@@ -547,6 +568,10 @@ func (m *model_) editItem() {
 	case tabSettings:
 		m.settingRows()[m.sel].open()
 	case tabLogs:
+		if m.logFile {
+			m.note = m.rawRows()[m.sel]
+			return
+		}
 		r := m.logRows()[m.sel]
 		where := "on the log server"
 		if r.ram {

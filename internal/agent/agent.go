@@ -100,7 +100,7 @@ func New(cfg config.Node) (*Agent, error) {
 		proxy:     &proxy.Proxy{StorageDir: cfg.CertMagicDir()},
 		startedAt: time.Now(),
 	}
-	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic, Update: a.Update, History: a.History, Events: a.Events}
+	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic, Update: a.Update, History: a.History, Events: a.Events, RawLog: a.RawLog}
 	a.captureLog()
 	return a, nil
 }
@@ -130,7 +130,9 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.wg.Up(a.Cfg.Userspace); err != nil {
 		return fmt.Errorf("wireguard: %w", err)
 	}
-	defer a.wg.Down()
+	// The kernel tunnel outlives this process: a restart or update does not
+	// interrupt traffic (meshgate stop / leave take it down).
+	defer a.wg.Release()
 	if self.Kind == model.NodeServer {
 		wg.EnableForwarding()
 		a.syncSelf(self)
@@ -150,6 +152,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	log.Printf("meshgate %s: node %s (%s) mesh ip %s", Version, self.Name, self.Kind, self.MeshIP)
 
 	a.prober = probe.New(a.Cfg.NodeID, mesh, wg.MarkSocket)
+	a.prober.SetBootID(a.tunnelID(a.wg.Created))
 	listen := self.ListenPort
 	if listen == 0 {
 		listen = model.DefaultWGPort
@@ -191,6 +194,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		mux.HandleFunc("/v1/history", a.serveHistory)
 		mux.HandleFunc("POST /v1/history/import", a.serveHistoryImport)
 		mux.HandleFunc("/v1/events", a.serveEvents)
+		mux.HandleFunc("GET /v1/rawlog", a.serveRawLog)
 		mux.Handle("/admin/", webui.AppAPI(a.ops, func() bool {
 			s, err := a.self()
 			return err != nil || s.AppAdminOff
@@ -347,6 +351,7 @@ func (a *Agent) reconcile(ctx context.Context) {
 	} else if recreated {
 		log.Printf("wg: interface %s was removed by something else; recreated it", a.Cfg.Iface)
 		a.lastWG, a.lastFW = nil, ""
+		a.prober.SetBootID(a.tunnelID(true)) // peers: our sessions are gone
 	}
 	a.wg.SyncUnderlay()
 	if a.lastWG == nil || !reflect.DeepEqual(*a.lastWG, cfg) {

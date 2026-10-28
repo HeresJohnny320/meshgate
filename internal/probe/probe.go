@@ -54,8 +54,10 @@ type Prober struct {
 	conn    net.PacketConn
 	srv     net.PacketConn
 	kick    chan struct{}
-	// Boot IDs let us notice a peer restart within one probe interval and
-	// re-handshake immediately instead of waiting for WireGuard timers.
+	// Boot IDs let us notice that a peer's tunnel was recreated (its
+	// WireGuard sessions are gone) within one probe interval and re-handshake
+	// immediately instead of waiting for WireGuard timers. A meshgate restart
+	// that keeps the kernel interface keeps its boot ID (SetBootID).
 	bootID    string
 	boots     map[string]string // node ID -> last boot ID seen
 	restarted map[string]bool
@@ -79,6 +81,16 @@ func New(selfID string, mesh netip.Prefix, ctl Control) *Prober {
 		restarted: map[string]bool{},
 	}
 }
+
+// SetBootID replaces the boot ID (see Prober.bootID).
+func (p *Prober) SetBootID(id string) {
+	p.mu.Lock()
+	p.bootID = id
+	p.mu.Unlock()
+}
+
+// NewBootID returns a fresh random boot ID.
+func NewBootID() string { return randomBootID() }
 
 func randomBootID() string {
 	var b [6]byte
@@ -146,7 +158,10 @@ func (p *Prober) Serve(ctx context.Context, port int) error {
 			p.inbound[sender] = time.Now()
 			p.mu.Unlock()
 		}
-		c.WriteTo(encode(typeResp, nonce, p.SelfID, p.bootID), from)
+		p.mu.Lock()
+		boot := p.bootID
+		p.mu.Unlock()
+		c.WriteTo(encode(typeResp, nonce, p.SelfID, boot), from)
 	}
 }
 

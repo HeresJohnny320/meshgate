@@ -306,8 +306,9 @@ config, `s` Let's Encrypt email, `y` theme, `r` refresh, `q` quit.
   switches to history (`v` changes the period, `o` saves it as CSV).
 - **Tools:** ping, traceroute, TCP/UDP port, HTTP and "my public IP" checks
   from this node, with quick picks for devices, forwards and sites.
-- **Logs:** every node's meshgate log in one place (`i` important/all, `f`
-  node, `v` period, `/` search, `Enter` the full line).
+- **Logs:** every node's meshgate log in one place (`i` important only, `f`
+  node, `v` period, `/` search, `Enter` the full line). `b` switches to one
+  server's full log file instead.
 - **Settings:** traffic history storage, the web UI admin login and the web
   UI certificate fingerprints.
 
@@ -319,6 +320,16 @@ UI or TUI. A node that cannot reach the log server keeps the newest 2,000
 undelivered lines in RAM and sends them, with their original times, once it
 can; meanwhile that node's own dashboard or TUI shows them, marked *in RAM*.
 Lines are kept as long as traffic history (365 days by default).
+
+**Show → Full log file of a node** (TUI: `b`) fetches a server's complete
+local log over the mesh: the systemd journal on Linux, `/var/log/meshgate.log`
+on pfSense. It also has what never reaches the event log, such as crashes and
+the service manager's stop and start messages.
+
+meshgate leaves its kernel WireGuard tunnel running when it stops or
+restarts (an update, `systemctl restart`, pfSense restarting its packages),
+the way plain WireGuard does, so connections through the mesh keep going.
+`meshgate stop` and `meshgate leave` take the tunnel down.
 
 Links between servers are watched: a link with no WireGuard handshake for 3
 minutes is logged as `DOWN` (with whether the other side still answers), and

@@ -23,6 +23,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/agent"
 	"github.com/heresjohnny320/meshgate/internal/config"
 	"github.com/heresjohnny320/meshgate/internal/tui"
+	"github.com/heresjohnny320/meshgate/internal/wg"
 )
 
 const usage = `meshgate - self-hosted WireGuard mesh, port forwarding and HTTPS tunnels
@@ -87,7 +88,7 @@ func main() {
 	case "service":
 		err = cmdService(cfgPath, rest)
 	case "start", "stop", "restart":
-		err = cmdStartStop(cmd)
+		err = cmdStartStop(cfgPath, cmd)
 	case "ports":
 		err = cmdPorts(cfgPath)
 	case "version", "--version", "-v":
@@ -105,7 +106,7 @@ func main() {
 }
 
 // cmdStartStop turns the service on or off for good (boot included).
-func cmdStartStop(cmd string) error {
+func cmdStartStop(cfgPath, cmd string) error {
 	if err := needRoot("meshgate " + cmd); err != nil {
 		return err
 	}
@@ -114,6 +115,12 @@ func cmdStartStop(cmd string) error {
 		if err := setService(false); err != nil {
 			return err
 		}
+		// The tunnel outlives a restart; stopping for good takes it down.
+		iface := config.DefaultIface
+		if c, err := config.Load(cfgPath); err == nil && c.Iface != "" {
+			iface = c.Iface
+		}
+		wg.Teardown(iface)
 		fmt.Println("meshgate stopped; it stays off after reboots until `meshgate start`.")
 	case "start":
 		if err := setService(true); err != nil {

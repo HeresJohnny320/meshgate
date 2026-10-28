@@ -159,3 +159,4 @@ h2.gap, .row-head.gap { margin-top: 24px; }
 .logs-bar label.inline { flex: 0 0 auto; }
 .ram-box { border: 1px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
 #logs td.when { white-space: nowrap; }
+#logs-file { max-height: 70vh; overflow: auto; white-space: pre-wrap; font-size: 12px; }

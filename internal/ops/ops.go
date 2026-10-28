@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +69,8 @@ type Service struct {
 	// Events searches the mesh's log (on the log server) and returns what
 	// this node still holds in RAM (nil: not available).
 	Events func(q url.Values) (any, error)
+	// RawLog returns a server's full local log (its journal or log file).
+	RawLog func(node string, lines int) (any, error)
 	// Update makes node update itself to the latest release (nil: not
 	// available here).
 	Update func(node string) (string, error)
@@ -726,6 +729,13 @@ func (s *Service) Handler(prefix string) http.Handler {
 			return nil, errors.New("the event log is not available here")
 		}
 		return s.Events(r.URL.Query())
+	})
+	route("GET rawlog", func(r *http.Request) (any, error) {
+		if s.RawLog == nil {
+			return nil, errors.New("node logs are not available here")
+		}
+		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
+		return s.RawLog(r.URL.Query().Get("node"), n)
 	})
 	route("GET changelog", func(r *http.Request) (any, error) {
 		return map[string]string{"text": changelog.Text}, nil

@@ -72,3 +72,14 @@ func TestWatchLinksLogs(t *testing.T) {
 		t.Errorf("down logged again:\n%s", got)
 	}
 }
+
+func TestTunnelIDSurvivesRestart(t *testing.T) {
+	a := &Agent{Cfg: config.Node{DataDir: t.TempDir()}}
+	first := a.tunnelID(true)
+	if again := a.tunnelID(false); again != first {
+		t.Fatalf("took over the running tunnel but announced a new ID: %s -> %s", first, again)
+	}
+	if fresh := a.tunnelID(true); fresh == first {
+		t.Fatal("a new interface kept the old ID: peers would keep dead sessions")
+	}
+}

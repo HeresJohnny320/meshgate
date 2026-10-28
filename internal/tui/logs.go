@@ -37,7 +37,7 @@ func (m *model_) logsQuery() string {
 		since = strconv.FormatInt(time.Now().Unix()-s, 10)
 	}
 	imp := "0"
-	if !m.logAll {
+	if m.logImp {
 		imp = "1"
 	}
 	return "events?since=" + since + "&node=" + url.QueryEscape(m.logNode) + "&q=" + url.QueryEscape(m.logText) + "&important=" + imp + "&limit=500"
@@ -103,7 +103,7 @@ func (m *model_) logLine(r logRow, sel bool, width int) string {
 // logsHint says where the lines come from and what is filtered.
 func (m *model_) logsHint() string {
 	filter := logSpans[m.logSpan].label
-	if !m.logAll {
+	if m.logImp {
 		filter += ", important only"
 	}
 	if m.logNode != "" {
@@ -128,6 +128,9 @@ func (m *model_) logsHint() string {
 // cycleLogNode steps the node filter through all servers.
 func (m *model_) cycleLogNode() {
 	ids := []string{""}
+	if m.logFile {
+		ids = nil // a file belongs to one node
+	}
 	for _, it := range m.v.Nodes {
 		if it.Value.Kind == model.NodeServer {
 			ids = append(ids, it.Value.ID)
@@ -140,6 +143,9 @@ func (m *model_) cycleLogNode() {
 		}
 	}
 	m.logNode = ""
+	if m.logFile && len(ids) > 0 {
+		m.logNode = ids[0]
+	}
 }
 
 func (m *model_) logSearchForm() {
@@ -147,4 +153,70 @@ func (m *model_) logSearchForm() {
 		m.logText, m.sel = v["q"], 0
 		return nil
 	}).text("q", "Text (empty = everything)", m.logText, "DOWN, pfsense, TLS…").init()
+}
+
+// ---------- full log file of one node ----------
+
+// rawResp is the ops "rawlog" answer: one server's own log, oldest first.
+type rawResp struct {
+	Node   string   `json:"node"`
+	Source string   `json:"source"`
+	Lines  []string `json:"lines"`
+	Error  string   `json:"error"`
+}
+
+// fileNode is the node whose log file is shown ("" = this one).
+func (m *model_) fileNode() string {
+	if m.logNode == "" {
+		return m.v.SelfID
+	}
+	return m.logNode
+}
+
+func (m *model_) rawQuery() string {
+	return "rawlog?node=" + url.QueryEscape(m.fileNode()) + "&n=1000"
+}
+
+// rawRows: newest first, filtered by the search text.
+func (m *model_) rawRows() []string {
+	if m.raw == nil {
+		return nil
+	}
+	var out []string
+	for i := len(m.raw.Lines) - 1; i >= 0; i-- {
+		if l := m.raw.Lines[i]; m.logText == "" || strings.Contains(strings.ToLower(l), strings.ToLower(m.logText)) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func (m *model_) rawLine(l string, sel bool, width int) string {
+	marker := "  "
+	if sel {
+		marker = selectedStyle.Render("> ")
+	}
+	style := mutedStyle
+	switch {
+	case strings.Contains(l, " DOWN") || strings.Contains(l, "panic") || strings.Contains(l, "Main process exited"):
+		style = errStyle
+	case events.Important.MatchString(l):
+		style = focusedStyle
+	}
+	return marker + style.Render(trunc(l, max(10, width-4)))
+}
+
+func (m *model_) rawHint() string {
+	name := m.name(m.fileNode())
+	switch {
+	case m.raw == nil:
+		return "full log file of " + name
+	case m.raw.Error != "":
+		return m.raw.Error
+	}
+	hint := fmt.Sprintf("full log file of %s (%s), newest first, last %d lines", name, m.raw.Source, len(m.raw.Lines))
+	if m.logText != "" {
+		hint += `, matching "` + m.logText + `"`
+	}
+	return hint
 }

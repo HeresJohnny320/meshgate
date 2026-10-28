@@ -44,6 +44,9 @@ type Manager struct {
 	Iface     string
 	Key       wgtypes.Key
 	Userspace bool // true if using wireguard-go
+	// Created: Up made a new interface (false: it took over the one a
+	// previous meshgate left running, sessions and all).
+	Created bool
 
 	mu       sync.Mutex
 	client   *wgctrl.Client
@@ -71,6 +74,7 @@ func (m *Manager) Up(forceUserspace bool) error {
 		m.client = c
 	}
 	link, err := netlink.LinkByName(m.Iface)
+	m.Created = err != nil
 	if err != nil {
 		if !forceUserspace {
 			la := netlink.NewLinkAttrs()
@@ -124,7 +128,11 @@ func (m *Manager) Ensure(forceUserspace bool) (recreated bool, err error) {
 	}
 	m.Userspace = false
 	m.mu.Unlock()
-	return true, m.Up(forceUserspace)
+	if err := m.Up(forceUserspace); err != nil {
+		return true, err
+	}
+	m.Created = true
+	return true, nil
 }
 
 // EnableForwarding turns on IPv4 routing (server nodes).
@@ -420,10 +428,40 @@ func (m *Manager) Stats() map[string]PeerStat {
 	return out
 }
 
+// Release lets go of the interface when meshgate exits but leaves a kernel
+// interface running with its peers, routes and rules, the way plain
+// WireGuard keeps going: traffic is not interrupted by a restart or update,
+// and the next start takes it over. (wireguard-go ends with the process.)
+// `meshgate stop` and `leave` take it down with Teardown.
+func (m *Manager) Release() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.dev != nil {
+		m.down0()
+		return
+	}
+	if m.client != nil {
+		m.client.Close()
+		m.client = nil
+	}
+}
+
+// Teardown removes the interface, its rules and tables (meshgate stop).
+func Teardown(iface string) {
+	m := New(iface, wgtypes.Key{})
+	m.underlay = true
+	m.Down()
+}
+
 // Down removes the interface, rules and firewall table.
 func (m *Manager) Down() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.down0()
+}
+
+// down0 is Down with m.mu held.
+func (m *Manager) down0() {
 	ensureRule(prioRoutes, fw.TableRoutes, 0, true, false)
 	ensureRule(prioReply, fw.TableReply, 0, false, false)
 	syncSrcRules(prioLANLocal, unix.RT_TABLE_MAIN, true, nil)
