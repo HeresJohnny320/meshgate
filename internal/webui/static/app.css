@@ -153,3 +153,9 @@ h2.gap, .row-head.gap { margin-top: 24px; }
   tr td:nth-last-child(1):not(.actions) { border-bottom: none; }
 }
 #cert-fps .fp { margin: 4px 0 10px; }
+
+.logs-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 8px; }
+.logs-bar label { flex: 1 1 160px; }
+.logs-bar label.inline { flex: 0 0 auto; }
+.ram-box { border: 1px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; }
+#logs td.when { white-space: nowrap; }

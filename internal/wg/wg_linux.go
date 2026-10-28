@@ -50,6 +50,7 @@ type Manager struct {
 	dev      *device.Device
 	uapi     net.Listener
 	underlay bool              // connmark rules loaded
+	nftTried time.Time         // last failed attempt (retried every 10 minutes)
 	routeErr map[string]string // last underlay error per route (logged once)
 }
 
@@ -431,7 +432,7 @@ func (m *Manager) Down() {
 	ensureRule(prioUnderlay, fw.TableUnderlay, 0, false, false)
 	syncTable(fw.TableUnderlay, nil, nil)
 	if m.underlay {
-		nft("table inet meshgate_underlay\ndelete table inet meshgate_underlay\n")
+		nft("table inet meshgate_underlay\ndelete table inet meshgate_underlay\n", true)
 		m.underlay = false
 	}
 	if m.uapi != nil {
@@ -506,7 +507,9 @@ func (m *Manager) SyncUnderlay() {
 	}
 	syncTable(fw.TableUnderlay, want, m.routeErr)
 	ensureRule(prioUnderlay, fw.TableUnderlay, fw.MarkBypass, false, len(want) > 0)
-	if !m.underlay {
+	if !m.underlay && time.Since(m.nftTried) > 10*time.Minute {
+		logged := !m.nftTried.IsZero()
+		m.nftTried = time.Now()
 		// Replies carry no mark; restore it from the connection so strict
 		// rp_filter (with src_valid_mark) checks them against the same
 		// table, as wg-quick does.
@@ -522,7 +525,7 @@ table inet meshgate_underlay {
 		meta l4proto udp ct mark 0x%[1]x meta mark set ct mark
 	}
 }
-`, fw.MarkBypass)) == nil
+`, fw.MarkBypass), logged) == nil
 	}
 }
 
@@ -585,11 +588,14 @@ func syncTable(table int, want []netlink.Route, errs map[string]string) {
 	}
 }
 
-func nft(rules string) error {
+// nft loads rules; quiet skips logging a failure already reported.
+func nft(rules string, quiet bool) error {
 	cmd := exec.Command("nft", "-f", "-")
 	cmd.Stdin = strings.NewReader(rules)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("wg: nft: %v: %s", err, strings.TrimSpace(string(out)))
+		if !quiet {
+			log.Printf("wg: nft: %v: %s (replies may hit strict rp_filter while another VPN holds the default route)", err, strings.TrimSpace(string(out)))
+		}
 		return err
 	}
 	return nil

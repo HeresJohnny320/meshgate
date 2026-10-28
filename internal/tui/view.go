@@ -82,6 +82,9 @@ func (m *model_) header(width int) string {
 	var tabLine []string
 	for i, t := range tabs {
 		label := fmt.Sprintf("%d %s", (i+1)%10, t)
+		if i >= 10 {
+			label = t // past the number keys: TAB reaches it
+		}
 		if i == m.tab {
 			tabLine = append(tabLine, keyStyle.Render(" "+label+" "))
 		} else {
@@ -134,6 +137,12 @@ func (m *model_) listView(width int) string {
 		start, end := window(m.sel, n, max(1, available))
 		for i := start; i < end; i++ {
 			body = append(body, line(width, m.toolLine(rows[i], i == m.sel)))
+		}
+	case m.tab == tabLogs:
+		rows := m.logRows()
+		start, end := window(m.sel, n, max(1, available))
+		for i := start; i < end; i++ {
+			body = append(body, line(width, m.logLine(rows[i], i == m.sel, width)))
 		}
 	case m.tab == tabSettings:
 		rows := m.settingRows()
@@ -203,6 +212,8 @@ func (m *model_) tabHint() string {
 		return "traffic history, last " + m.histRange + where + "   V: change period   M: live"
 	case tabTools:
 		return "connectivity checks from this node"
+	case tabLogs:
+		return m.logsHint()
 	case tabSettings:
 		return "mesh-wide settings and the web UI's certificates"
 	case tabDevices:
@@ -221,6 +232,11 @@ func (m *model_) emptyText() string {
 		return "No access rules. They only matter on nodes whose LAN policy is RESTRICTED (edit the node on tab 1)."
 	case tabExits:
 		return "No exit routes. Press A to send a LAN device (e.g. 192.168.200.11) out through an exit node."
+	case tabLogs:
+		if !m.logAll {
+			return "Nothing important in this period. Press I to see every line, V for a longer period."
+		}
+		return "No log lines in this period."
 	case tabDevices:
 		return "No tokens. Press A to create one, or W for a device using the official WireGuard app."
 	}
@@ -241,6 +257,8 @@ func (m *model_) footer(width int) string {
 		}
 	case tabTools:
 		keys = append(keys, key{"ENTER", "run"})
+	case tabLogs:
+		keys = append(keys, key{"ENTER", "full line"}, key{"I", "important/all"}, key{"F", "node"}, key{"V", "period"}, key{"/", "search"})
 	case tabSettings:
 		keys = append(keys, key{"ENTER", "change / show"})
 	case tabForwards, tabHTTPS, tabRules, tabExits:

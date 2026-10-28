@@ -21,9 +21,11 @@ function fail($code, $msg) {
 	exit;
 }
 
-// e.g. "/api/view", "/api/history?range=1d" or
-// "/api/history?from=..&to=..&step=.." (the only queries anything sends).
-if (!preg_match('#^/?(api|auth)/([a-z-]+)(\?(range=[0-9a-z]{1,4}|from=[0-9]{1,12}&to=[0-9]{1,12}&step=[0-9]{1,6}))?$#', $_GET['p'] ?? '', $m)) {
+// e.g. "/api/view", "/api/history?range=1d",
+// "/api/history?from=..&to=..&step=.." or
+// "/api/events?since=..&node=..&q=..&important=..&limit=.." (the only
+// queries anything sends; the search text is URL-encoded).
+if (!preg_match('#^/?(api|auth)/([a-z-]+)(\?(range=[0-9a-z]{1,4}|from=[0-9]{1,12}&to=[0-9]{1,12}&step=[0-9]{1,6}|since=[0-9]{0,12}&node=[A-Za-z0-9_-]{0,64}&q=[A-Za-z0-9%+._~-]{0,300}&important=[01]&limit=[0-9]{1,4}))?$#', $_GET['p'] ?? '', $m)) {
 	fail(404, "not found");
 }
 $post = $_SERVER['REQUEST_METHOD'] === 'POST';

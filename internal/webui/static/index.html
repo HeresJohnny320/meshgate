@@ -30,6 +30,7 @@
         <button data-tab="exits">Exit routes</button>
         <button data-tab="devices">Add devices</button>
         <button data-tab="tools">Tools</button>
+        <button data-tab="logs">Logs</button>
         <button data-tab="settings">Settings</button>
         <button data-tab="changelog">Changelog</button>
       </nav>
@@ -175,6 +176,23 @@
         <pre id="diag-out" class="card out-pre hidden"></pre>
       </section>
 
+      <section id="tab-logs" class="hidden">
+        <p class="hint">Every node's meshgate log, stored on the log server (Settings → Traffic history). A node that
+          cannot reach it keeps its lines in RAM and delivers them once it can; open that node's dashboard (or
+          <code>meshgate tui</code> there) to read them meanwhile.</p>
+        <form id="logs-form" class="logs-bar">
+          <label>Node <select name="node"><option value="">All nodes</option></select></label>
+          <label>Period <select name="since">
+            <option value="3600">Last hour</option><option value="86400" selected>Last day</option>
+            <option value="604800">Last week</option><option value="0">Everything kept</option></select></label>
+          <label>Search <input name="q" placeholder="DOWN, pfsense, TLS…"></label>
+          <label class="inline"><input type="checkbox" name="important" checked> Important only</label>
+        </form>
+        <p class="hint" id="logs-info"></p>
+        <div id="logs-pending"></div>
+        <div class="table-wrap"><table id="logs"></table></div>
+      </section>
+
       <section id="tab-changelog" class="hidden">
         <div class="card changelog" id="changelog"></div>
       </section>
@@ -187,9 +205,10 @@
             <button type="submit">Save</button>
           </form>
           <form id="history-form" class="card">
-            <h2>Traffic history</h2>
-            <p class="hint">Every server sends 5-minute traffic summaries to one log server, which keeps them for the
-              graphs in Traffic → History (a year of a typical mesh is about 10-30 MB).</p>
+            <h2>Log server</h2>
+            <p class="hint">Every server sends 5-minute traffic summaries and its log lines to one log server, which
+              keeps them for Traffic → History and the Logs tab (a year of a typical mesh is about 10-30 MB). Changing
+              it moves the traffic history over; earlier log lines stay on the previous server.</p>
             <label>Log server <select name="log_server"></select></label>
             <label>Keep for (days) <input name="log_days" type="number" min="1" max="3650" placeholder="365"></label>
             <button type="submit">Save</button>

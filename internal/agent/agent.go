@@ -76,8 +76,10 @@ type Agent struct {
 	testPort int
 	testStop context.CancelFunc
 	testErr  string
-	meters   meters    // traffic counters (traffic.go)
-	hist     histState // traffic history (history.go)
+	meters   meters     // traffic counters (traffic.go)
+	hist     histState  // traffic history (history.go)
+	links    linkWatch  // drops and path changes in the log (linkwatch.go)
+	ev       eventState // the event log (eventlog.go)
 }
 
 // New prepares an agent from the node config.
@@ -98,7 +100,8 @@ func New(cfg config.Node) (*Agent, error) {
 		proxy:     &proxy.Proxy{StorageDir: cfg.CertMagicDir()},
 		startedAt: time.Now(),
 	}
-	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic, Update: a.Update, History: a.History}
+	a.ops = &ops.Service{Store: s, SelfID: cfg.NodeID, Runtime: a.Runtime, Traffic: a.Traffic, Update: a.Update, History: a.History, Events: a.Events}
+	a.captureLog()
 	return a, nil
 }
 
@@ -165,6 +168,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 	}()
 	go a.prober.Run(ctx, a.probeTargets)
+	go a.eventsLoop(ctx)
 
 	a.reconcile(ctx) // brings up the mesh address before we bind to it
 
@@ -186,6 +190,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		mux.HandleFunc("POST /v1/update", a.serveUpdate)
 		mux.HandleFunc("/v1/history", a.serveHistory)
 		mux.HandleFunc("POST /v1/history/import", a.serveHistoryImport)
+		mux.HandleFunc("/v1/events", a.serveEvents)
 		mux.Handle("/admin/", webui.AppAPI(a.ops, func() bool {
 			s, err := a.self()
 			return err != nil || s.AppAdminOff
@@ -423,6 +428,7 @@ func (a *Agent) reconcile(ctx context.Context) {
 	if a.proxyErr != "" {
 		warn = append(warn, "https proxy: "+a.proxyErr)
 	}
+	a.watchLinks(nodes, res, warn)
 	a.warnings = warn
 }
 

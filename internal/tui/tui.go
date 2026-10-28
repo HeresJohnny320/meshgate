@@ -23,7 +23,7 @@ import (
 	"github.com/heresjohnny320/meshgate/internal/traffic"
 )
 
-var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES", "TRAFFIC", "TOOLS", "SETTINGS", "CHANGES"}
+var tabs = []string{"NODES", "FORWARDS", "HTTPS", "RULES", "EXITS", "DEVICES", "TRAFFIC", "TOOLS", "LOGS", "SETTINGS", "CHANGES"}
 
 // changeLines is the changelog shown on the CHANGES tab.
 var changeLines = func() []string {
@@ -45,8 +45,9 @@ const (
 	tabDevices
 	tabTraffic
 	tabTools
+	tabLogs
 	tabSettings
-	tabChanges
+	tabChanges // no number key: TAB / SHIFT+TAB
 )
 
 // histResp is the log server's answer for one range (ops "history").
@@ -69,6 +70,7 @@ type viewMsg struct {
 	histErr string
 	traffic []traffic.Node
 	live    bool // traffic was fetched (TRAFFIC tab, live view)
+	logs    *logsResp
 }
 
 // diagMsg is the result of a check started on the TOOLS tab.
@@ -102,13 +104,20 @@ type model_ struct {
 	// diagReq is a check the TOOLS form asked for; it runs in the
 	// background so traceroutes do not freeze the screen.
 	diagReq *diag.Check
+	// LOGS tab: the answer and its filters.
+	logs    *logsResp
+	logErr  string
+	logAll  bool // false: important lines only
+	logNode string
+	logText string
+	logSpan int // index into logSpans
 }
 
 // Run starts the TUI.
 func Run(socket string) error {
 	t := loadTheme()
 	applyTheme(t)
-	m := &model_{api: localapi.New(socket), theme: t.name, histRange: "1d"}
+	m := &model_{api: localapi.New(socket), theme: t.name, histRange: "1d", logSpan: 1}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -120,10 +129,17 @@ func tick() tea.Cmd {
 }
 
 func (m *model_) load() tea.Cmd {
-	tab, rng, hist := m.tab, m.histRange, m.history
+	tab, rng, hist, logQ := m.tab, m.histRange, m.history, m.logsQuery()
 	return func() tea.Msg {
 		v, err := m.api.View()
 		msg := viewMsg{v: v, err: err}
+		if tab == tabLogs && err == nil {
+			var l logsResp
+			if lerr := m.api.Get(logQ, &l); lerr != nil {
+				l.Error = lerr.Error()
+			}
+			msg.logs = &l
+		}
 		if tab == tabTraffic && !hist && err == nil {
 			msg.live = true
 			if terr := m.api.Get("traffic", &msg.traffic); terr != nil {
@@ -154,6 +170,9 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.live {
 			m.traffic = msg.traffic
+		}
+		if msg.logs != nil {
+			m.logs = msg.logs
 		}
 		if n := m.rows(); m.sel >= n {
 			m.sel = max(0, n-1)
@@ -203,17 +222,17 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "tab", "right", "l":
 		m.tab, m.sel = (m.tab+1)%len(tabs), 0
-		if m.tab == tabTraffic {
+		if m.tab == tabTraffic || m.tab == tabLogs {
 			return m, m.load()
 		}
 	case "shift+tab", "left", "h":
 		m.tab, m.sel = (m.tab-1+len(tabs))%len(tabs), 0
-		if m.tab == tabTraffic {
+		if m.tab == tabTraffic || m.tab == tabLogs {
 			return m, m.load()
 		}
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9", "0":
 		m.tab, m.sel = (int(key[0]-'0')+9)%10, 0
-		if m.tab == tabTraffic {
+		if m.tab == tabTraffic || m.tab == tabLogs {
 			return m, m.load()
 		}
 	case "up", "k":
@@ -237,6 +256,21 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "t", " ":
 		m.toggleItem()
 		return m, m.load()
+	case "i":
+		if m.tab == tabLogs {
+			m.logAll, m.sel = !m.logAll, 0
+			return m, m.load()
+		}
+	case "f":
+		if m.tab == tabLogs {
+			m.cycleLogNode()
+			m.sel = 0
+			return m, m.load()
+		}
+	case "/":
+		if m.tab == tabLogs {
+			m.logSearchForm()
+		}
 	case "m":
 		if m.tab == tabTraffic {
 			m.history, m.sel = !m.history, 0
@@ -251,6 +285,10 @@ func (m *model_) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updateAll()
 		}
 	case "v":
+		if m.tab == tabLogs {
+			m.logSpan, m.sel = (m.logSpan+1)%len(logSpans), 0
+			return m, m.load()
+		}
 		if m.tab == tabTraffic && m.history {
 			for i, r := range histRanges {
 				if r == m.histRange {
@@ -387,6 +425,8 @@ func (m *model_) rows() int {
 		return len(m.histRows())
 	case tabTools:
 		return len(m.toolRows())
+	case tabLogs:
+		return len(m.logRows())
 	case tabSettings:
 		return len(m.settingRows())
 	case tabDevices:
@@ -506,6 +546,13 @@ func (m *model_) editItem() {
 		m.diagForm(m.toolRows()[m.sel].check)
 	case tabSettings:
 		m.settingRows()[m.sel].open()
+	case tabLogs:
+		r := m.logRows()[m.sel]
+		where := "on the log server"
+		if r.ram {
+			where = "in this node's RAM, not delivered yet"
+		}
+		m.note = time.Unix(r.e.T, 0).Format("2006-01-02 15:04:05") + "  " + m.name(r.e.Node) + "  (" + where + ")\n\n" + r.e.Text
 	}
 }
 
@@ -666,6 +713,7 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			tp, _ := strconv.Atoi(strings.TrimSpace(v["test_port"]))
 			patch["test_port"] = tp
 			patch["app_admin"] = v["app_admin"] == "true"
+			patch["beep"] = v["beep"] == "true"
 			patch["iptables"] = v["iptables"] == "true"
 			patch["host_firewall"] = v["host_firewall"] == "true"
 			var le []model.LANExit
@@ -690,6 +738,7 @@ func (m *model_) nodeForm(it ops.Item[model.Node]) {
 			toggle("exit", "Exit node (devices may use it for internet)", n.Exit).
 			text("test_port", "Test service port (empty = off)", itoa0(n.TestPort), "8099").
 			toggle("app_admin", "Phone app may manage through this node", !n.AppAdminOff).
+			toggle("beep", "Beep when a server link drops/returns", !n.BeepOff).
 			toggle("iptables", "Add iptables allow rules (ufw/Docker)", !n.IptablesOff).
 			toggle("host_firewall", "Open ports in ufw/firewalld automatically", !n.HostFirewallOff).
 			text("lan_exit_src", "LAN devices via exit (IPs/subnets, comma)", lanExitSrcs(n), "192.168.1.205, 192.168.20.0/24").

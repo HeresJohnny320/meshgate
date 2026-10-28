@@ -511,7 +511,7 @@ func (m *model_) settingRows() []settingRow {
 	}
 	rows := []settingRow{
 		{"Let's Encrypt email", dash(netw.ACMEEmail), m.settingsForm},
-		{"Traffic history", fmt.Sprintf("stored on %s, kept %d days", logServer, netw.HistoryDays()), m.historyForm},
+		{"Log server (history and logs)", fmt.Sprintf("%s, kept %d days", logServer, netw.HistoryDays()), m.historyForm},
 		{"Web UI admin login", "change the username or password", m.adminForm},
 	}
 	for _, it := range m.v.Nodes {
@@ -556,7 +556,7 @@ func (m *model_) historyForm() {
 	if m.v.Network.LogDays > 0 {
 		days = strconv.Itoa(m.v.Network.LogDays)
 	}
-	m.form = newForm("Traffic history", func(v map[string]string) error {
+	m.form = newForm("Log server (traffic history and logs)", func(v map[string]string) error {
 		return m.api.Post("history-settings", map[string]any{"log_server": v["server"], "log_days": atoi(v["days"])}, nil)
 	}).
 		choice("server", "Log server", servers, m.v.Network.LogServer).

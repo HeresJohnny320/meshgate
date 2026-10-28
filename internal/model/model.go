@@ -126,6 +126,9 @@ type Node struct {
 	// management requests (by default every server does, so the app keeps
 	// working when one is down).
 	AppAdminOff bool `json:"app_admin_off,omitempty"`
+	// BeepOff silences the PC speaker tune this node plays when a link to
+	// another server goes down or comes back (pfSense/FreeBSD).
+	BeepOff bool `json:"beep_off,omitempty"`
 	// IptablesOff: meshgate leaves iptables alone on this node (Linux). By
 	// default it keeps a MESHGATE chain in iptables' FORWARD chain that lets
 	// this node's port forwards, relaying and exit traffic past ufw/Docker.

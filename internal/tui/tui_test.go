@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/heresjohnny320/meshgate/internal/diag"
+	"github.com/heresjohnny320/meshgate/internal/events"
 	"github.com/heresjohnny320/meshgate/internal/model"
 	"github.com/heresjohnny320/meshgate/internal/ops"
 )
@@ -81,9 +82,9 @@ func TestParityTabs(t *testing.T) {
 		}
 	}
 
-	// "0" is the last tab.
+	// "0" is SETTINGS; CHANGES is past the number keys.
 	key("0")
-	if m.tab != tabChanges {
+	if m.tab != tabSettings {
 		t.Fatalf("0 went to tab %d", m.tab)
 	}
 
@@ -138,6 +139,33 @@ func TestParityTabs(t *testing.T) {
 		t.Fatal("password shown in clear text")
 	}
 	key("esc")
+
+	// LOGS: lines still in RAM come first and are marked; Enter shows one.
+	m.tab, m.sel = tabLogs, 0
+	m.logs = &logsResp{Server: "vps", Node: "a",
+		Pending: []events.Entry{{T: 1800000300, Node: "a", Text: "link to home DOWN: no WireGuard handshake"}},
+		Entries: []events.Entry{{T: 1800000000, Node: "b", Text: "link to vps UP again after 1m0s"}}}
+	if rows := m.logRows(); len(rows) != 2 || !rows[0].ram || rows[1].ram {
+		t.Fatalf("log rows: %+v", rows)
+	}
+	if out := m.View(); !strings.Contains(out, "RAM") || !strings.Contains(out, "waiting in RAM") {
+		t.Fatal("RAM lines not marked")
+	}
+	key("enter")
+	if !strings.Contains(m.note, "not delivered yet") || !strings.Contains(m.note, "DOWN") {
+		t.Fatalf("note: %q", m.note)
+	}
+	key("x")
+	// Log server unreachable: this node's RAM is what there is.
+	m.logs = &logsResp{Error: "log server vps is not reachable", Recent: m.logs.Pending, Pending: m.logs.Pending}
+	if rows := m.logRows(); len(rows) != 1 || !rows[0].ram {
+		t.Fatalf("offline rows: %+v", rows)
+	}
+	key("i")
+	key("f")
+	if !m.logAll || m.logNode != "a" || !strings.Contains(m.logsQuery(), "important=0") || !strings.Contains(m.logsQuery(), "node=a") {
+		t.Fatalf("filters: all=%v node=%q q=%s", m.logAll, m.logNode, m.logsQuery())
+	}
 
 	// NODES: detected subnets skip what is shared and container bridges.
 	if got := m.detectedSubnets(m.v.Nodes[1].Value); len(got) != 1 || got[0] != "192.168.90.0/24" {

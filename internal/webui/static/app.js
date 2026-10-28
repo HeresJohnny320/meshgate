@@ -90,6 +90,11 @@ $("#tabs").addEventListener("click", (e) => {
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "tab-" + b.dataset.tab));
   clearInterval(trafficTimer);
+  clearInterval(logsTimer);
+  if (b.dataset.tab === "logs") {
+    loadLogs().catch((err) => { $("#logs-info").textContent = err.message; });
+    logsTimer = setInterval(() => loadLogs().catch(() => {}), 5000);
+  }
   if (b.dataset.tab === "changelog") renderChangelog().catch((err) => toast(err.message));
   if (b.dataset.tab === "traffic") {
     loadHistory().catch((err) => { $("#hist-info").textContent = err.message; });
@@ -97,6 +102,43 @@ $("#tabs").addEventListener("click", (e) => {
     trafficTimer = setInterval(() => refreshTraffic().catch(() => {}), 3000);
   }
 });
+
+// ---------- logs ----------
+
+let logsTimer = null;
+const logRow = (e, ram) => `<tr${ram ? ' class="busy"' : ""}><td class="when mono">${esc(new Date(e.t * 1000).toLocaleString())}</td>
+  <td>${esc(nodeName(e.node))}${ram ? ' <span class="chip local">in RAM</span>' : ""}</td><td class="mono wrap">${esc(e.text)}</td></tr>`;
+
+async function loadLogs() {
+  const f = $("#logs-form");
+  const sel = f.node, keep = sel.value;
+  sel.innerHTML = '<option value="">All nodes</option>' + view.nodes.filter((n) => n.value.kind === "server")
+    .map((n) => `<option value="${esc(n.value.id)}">${esc(n.value.name)}</option>`).join("");
+  sel.value = keep;
+  const span = parseInt(f.since.value, 10);
+  // Fixed order: the pfSense GUI's proxy only passes this exact query.
+  const q = `since=${span ? Math.floor(Date.now() / 1000) - span : ""}&node=${encodeURIComponent(sel.value)}` +
+    `&q=${encodeURIComponent(f.q.value.trim()).replace(/%20/g, "+")}&important=${f.important.checked ? 1 : 0}&limit=500`;
+  const r = await api("/api/events?" + q);
+  const self = nodeName(r.node);
+  $("#logs-info").innerHTML = r.error
+    ? `<span class="busy">${esc(r.error)}</span>. Showing what ${esc(self)} keeps in RAM.`
+    : `Stored on <b>${esc(r.server)}</b> · ${r.entries.length} line${r.entries.length === 1 ? "" : "s"}${r.entries.length >= 500 ? " (newest 500)" : ""}`;
+  const pending = r.pending || [];
+  $("#logs-pending").innerHTML = pending.length
+    ? `<div class="ram-box"><b>${pending.length} line${pending.length === 1 ? "" : "s"} waiting in ${esc(self)}'s RAM</b>
+        <span class="hint">: sent to the log server as soon as it can be reached${r.dropped ? `; ${r.dropped} older ones were dropped for space` : ""}.</span></div>`
+    : "";
+  const rows = r.error ? (r.recent || []).map((e) => logRow(e, pending.some((p) => p.t === e.t && p.text === e.text)))
+    : [...pending.map((e) => logRow(e, true)), ...r.entries.map((e) => logRow(e, false))];
+  $("#logs").innerHTML = `<tr><th>Time</th><th>Node</th><th>Message</th></tr>` +
+    (rows.join("") || empty(3, f.important.checked ? "Nothing important in this period. Untick Important only to see everything." : "No log lines in this period"));
+  labelTables();
+}
+$("#logs-form").addEventListener("change", () => loadLogs().catch((err) => toast(err.message)));
+$("#logs-form").addEventListener("submit", (e) => { e.preventDefault(); loadLogs().catch((err) => toast(err.message)); });
+let logsTyping = null;
+$("#logs-form").q.addEventListener("input", () => { clearTimeout(logsTyping); logsTyping = setTimeout(() => loadLogs().catch(() => {}), 400); });
 
 // ---------- changelog ----------
 
@@ -1023,6 +1065,7 @@ function nodeDialog(it) {
        <label class="inline full"><input type="checkbox" name="iptables" ${n.iptables_off ? "" : "checked"}> Add iptables allow rules for this node's forwards, relaying and exits (needed with ufw or Docker; Linux)</label>
        <label class="inline full"><input type="checkbox" name="host_firewall" ${n.host_firewall_off ? "" : "checked"}> Open ports in ufw / firewalld automatically: meshgate's own ports, 80 and 443 for HTTPS routes, and every port forward (Linux; removed again when a forward or route is deleted)</label>
        <label class="inline full"><input type="checkbox" name="app_admin" ${n.app_admin_off ? "" : "checked"}> Phone app may manage the mesh through this node</label>
+       <label class="inline full"><input type="checkbox" name="beep" ${n.beep_off ? "" : "checked"}> Beep when a link to another server goes down or comes back (pfSense / FreeBSD PC speaker)</label>
        <label class="full">Test service port (TCP+UDP, empty = off; see Tools) <input name="test_port" type="number" min="1" max="65535" value="${n.test_port || ""}" placeholder="off"></label>
        <label class="full">LAN policy — who may reach this node and its subnets through the mesh
          <select name="lan_policy">
@@ -1041,7 +1084,7 @@ function nodeDialog(it) {
         Object.assign(patch, { exit_via: fd.get("exit_via"), exit_only: fd.get("exit_only") === "on", exits_allowed: allowed });
       }
       else Object.assign(patch, { endpoints: lines("endpoints"), routes: lines("routes"), relay: fd.get("relay") === "on",
-        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0, app_admin: fd.get("app_admin") === "on", iptables: fd.get("iptables") === "on", host_firewall: fd.get("host_firewall") === "on",
+        exit: fd.get("exit") === "on", lan_policy: fd.get("lan_policy"), test_port: parseInt(fd.get("test_port"), 10) || 0, app_admin: fd.get("app_admin") === "on", beep: fd.get("beep") === "on", iptables: fd.get("iptables") === "on", host_firewall: fd.get("host_firewall") === "on",
         lan_exits: lines("lan_exit_src").map((src) => ({ src, via: fd.get("lan_exit_via") })), exit_only: fd.get("exit_only") === "on" });
       await api("/api/node", { id: n.id, patch, scope: fd.get("scope") });
     });

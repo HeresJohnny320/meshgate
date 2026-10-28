@@ -294,7 +294,7 @@ sudo meshgate tui
 
 The TUI can do everything the web UI can. Sections: `1` Nodes, `2` Forwards,
 `3` HTTPS, `4` Rules, `5` Exit routes, `6` Devices, `7` Traffic, `8` Tools,
-`9` Settings, `0` Changes (or `Tab`). Keys: `a` add, `e`/`Enter` edit or run,
+`9` Logs, `0` Settings, then Changes (`Tab` moves through all of them). Keys: `a` add, `e`/`Enter` edit or run,
 `t` turn on/off, `d` delete, `c` drop a local-only override, `w` WireGuard app
 config, `s` Let's Encrypt email, `y` theme, `r` refresh, `q` quit.
 
@@ -306,8 +306,25 @@ config, `s` Let's Encrypt email, `y` theme, `r` refresh, `q` quit.
   switches to history (`v` changes the period, `o` saves it as CSV).
 - **Tools:** ping, traceroute, TCP/UDP port, HTTP and "my public IP" checks
   from this node, with quick picks for devices, forwards and sites.
+- **Logs:** every node's meshgate log in one place (`i` important/all, `f`
+  node, `v` period, `/` search, `Enter` the full line).
 - **Settings:** traffic history storage, the web UI admin login and the web
   UI certificate fingerprints.
+
+### Event log
+
+Every node copies its meshgate log lines to the log server (the one that
+keeps traffic history) every 10 seconds; read them under **Logs** in the web
+UI or TUI. A node that cannot reach the log server keeps the newest 2,000
+undelivered lines in RAM and sends them, with their original times, once it
+can; meanwhile that node's own dashboard or TUI shows them, marked *in RAM*.
+Lines are kept as long as traffic history (365 days by default).
+
+Links between servers are watched: a link with no WireGuard handshake for 3
+minutes is logged as `DOWN` (with whether the other side still answers), and
+`UP again after …` when it returns. pfSense/FreeBSD nodes also play a falling
+tune on the PC speaker when a link drops and a rising one when it is back
+(turn it off per node: Nodes → Edit → Beep).
 
 ### Commands
 

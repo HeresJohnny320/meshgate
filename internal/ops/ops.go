@@ -65,6 +65,9 @@ type Service struct {
 	// History returns traffic history: a range ("6h", "1d", "1w", "1m",
 	// "1y"), or from/to (unix seconds) with a step for downloads.
 	History func(q url.Values) (any, error)
+	// Events searches the mesh's log (on the log server) and returns what
+	// this node still holds in RAM (nil: not available).
+	Events func(q url.Values) (any, error)
 	// Update makes node update itself to the latest release (nil: not
 	// available here).
 	Update func(node string) (string, error)
@@ -389,6 +392,7 @@ type NodePatch struct {
 	ExitVia      *string          `json:"exit_via,omitempty"`
 	TestPort     *int             `json:"test_port,omitempty"`
 	AppAdmin     *bool            `json:"app_admin,omitempty"`
+	Beep         *bool            `json:"beep,omitempty"`
 	LANExits     *[]model.LANExit `json:"lan_exits,omitempty"`
 	ExitOnly     *bool            `json:"exit_only,omitempty"`
 	ExitsAllowed *[]string        `json:"exits_allowed,omitempty"`
@@ -483,6 +487,9 @@ func (s *Service) UpdateNode(id string, p NodePatch, scope store.Scope) (model.N
 	}
 	if p.ExitOnly != nil {
 		n.ExitOnly = *p.ExitOnly
+	}
+	if p.Beep != nil {
+		n.BeepOff = !*p.Beep
 	}
 	if p.AppAdmin != nil {
 		n.AppAdminOff = !*p.AppAdmin
@@ -713,6 +720,12 @@ func (s *Service) Handler(prefix string) http.Handler {
 			return nil, err
 		}
 		return map[string]bool{"ok": true}, s.SetHistorySettings(b.LogServer, b.LogDays)
+	})
+	route("GET events", func(r *http.Request) (any, error) {
+		if s.Events == nil {
+			return nil, errors.New("the event log is not available here")
+		}
+		return s.Events(r.URL.Query())
 	})
 	route("GET changelog", func(r *http.Request) (any, error) {
 		return map[string]string{"text": changelog.Text}, nil
