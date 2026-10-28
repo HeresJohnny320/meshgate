@@ -337,6 +337,12 @@ func (a *Agent) reconcile(ctx context.Context) {
 		return
 	}
 	warn = append(warn, cfg.Warnings...)
+	if recreated, err := a.wg.Ensure(a.Cfg.Userspace); err != nil {
+		warn = append(warn, "wireguard interface: "+err.Error())
+	} else if recreated {
+		log.Printf("wg: interface %s was removed by something else; recreated it", a.Cfg.Iface)
+		a.lastWG, a.lastFW = nil, ""
+	}
 	a.wg.SyncUnderlay()
 	if a.lastWG == nil || !reflect.DeepEqual(*a.lastWG, cfg) {
 		if err := a.wg.Apply(cfg); err != nil {

@@ -76,8 +76,38 @@ func (m *Manager) Up(forceUserspace bool) error {
 	if _, err := run("ifconfig", m.Iface, "mtu", strconv.Itoa(MTU), "up"); err != nil {
 		return err
 	}
+	// FreeBSD puts every if_wg interface in the "wg" group, which pfSense's
+	// WireGuard package treats as its own tunnels: stopping or resyncing it
+	// destroyed ours. Leave the group (fails harmlessly for wireguard-go).
+	run("ifconfig", m.Iface, "-group", "wg")
 	m.up = true
 	return nil
+}
+
+// Ensure recreates the interface when something else removed it (it must
+// exist for as long as meshgate runs). recreated tells the caller to apply
+// the whole config again.
+func (m *Manager) Ensure(forceUserspace bool) (recreated bool, err error) {
+	m.mu.Lock()
+	if !m.up {
+		m.mu.Unlock()
+		return false, nil
+	}
+	if _, err := net.InterfaceByName(m.Iface); err == nil {
+		m.mu.Unlock()
+		return false, nil
+	}
+	if m.uapi != nil {
+		m.uapi.Close()
+		m.uapi = nil
+	}
+	if m.dev != nil {
+		m.dev.Close()
+		m.dev = nil
+	}
+	m.up, m.Userspace, m.routes = false, false, map[netip.Prefix]bool{}
+	m.mu.Unlock()
+	return true, m.Up(forceUserspace)
 }
 
 func (m *Manager) createKernel() error {

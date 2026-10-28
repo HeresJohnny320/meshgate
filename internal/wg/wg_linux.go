@@ -49,7 +49,8 @@ type Manager struct {
 	client   *wgctrl.Client
 	dev      *device.Device
 	uapi     net.Listener
-	underlay bool // connmark rules loaded
+	underlay bool              // connmark rules loaded
+	routeErr map[string]string // last underlay error per route (logged once)
 }
 
 // New creates a manager; call Up before Apply.
@@ -97,6 +98,32 @@ func (m *Manager) Up(forceUserspace bool) error {
 	sysctl("net/ipv4/conf/all/src_valid_mark", "1")
 	sysctl("net/ipv4/conf/"+m.Iface+"/rp_filter", "2")
 	return nil
+}
+
+// Ensure recreates the interface when something else removed it (`ip link
+// del`, another VPN tool cleaning up). recreated tells the caller to apply
+// the whole config again.
+func (m *Manager) Ensure(forceUserspace bool) (recreated bool, err error) {
+	m.mu.Lock()
+	if m.client == nil {
+		m.mu.Unlock()
+		return false, nil // not up yet
+	}
+	if _, err := netlink.LinkByName(m.Iface); err == nil {
+		m.mu.Unlock()
+		return false, nil
+	}
+	if m.uapi != nil {
+		m.uapi.Close()
+		m.uapi = nil
+	}
+	if m.dev != nil {
+		m.dev.Close()
+		m.dev = nil
+	}
+	m.Userspace = false
+	m.mu.Unlock()
+	return true, m.Up(forceUserspace)
 }
 
 // EnableForwarding turns on IPv4 routing (server nodes).
@@ -402,7 +429,7 @@ func (m *Manager) Down() {
 	syncSrcRules(prioLANExit, fw.TableLANExit, false, nil)
 	syncSrcRules(prioLANBlock, fw.TableLANBlock, false, nil)
 	ensureRule(prioUnderlay, fw.TableUnderlay, 0, false, false)
-	syncTable(fw.TableUnderlay, nil)
+	syncTable(fw.TableUnderlay, nil, nil)
 	if m.underlay {
 		nft("table inet meshgate_underlay\ndelete table inet meshgate_underlay\n")
 		m.underlay = false
@@ -443,11 +470,21 @@ func (m *Manager) SyncUnderlay() {
 	var want []netlink.Route
 	have := map[string]bool{}
 	for _, r := range all {
-		if r.Table != unix.RT_TABLE_MAIN || r.Type != unix.RTN_UNICAST || !viaReal(r, real) {
-			continue
+		if r.Table != unix.RT_TABLE_MAIN || r.Type != unix.RTN_UNICAST || !viaReal(r, real) || r.Flags&unix.RTNH_F_LINKDOWN != 0 {
+			continue // a down link (e.g. an idle Docker bridge) cannot take routes
+		}
+		// Only ONLINK may be set by us; LINKDOWN, DEAD etc. are the kernel's.
+		hops := make([]*netlink.NexthopInfo, 0, len(r.MultiPath))
+		for _, h := range r.MultiPath {
+			c := *h
+			c.Flags &= unix.RTNH_F_ONLINK
+			hops = append(hops, &c)
+		}
+		if len(hops) == 0 {
+			hops = nil
 		}
 		want = append(want, netlink.Route{LinkIndex: r.LinkIndex, Dst: r.Dst, Gw: r.Gw, Src: r.Src, Scope: r.Scope,
-			Priority: r.Priority, MultiPath: r.MultiPath, Flags: r.Flags, Type: unix.RTN_UNICAST, Table: fw.TableUnderlay})
+			Priority: r.Priority, MultiPath: hops, Flags: r.Flags & unix.RTNH_F_ONLINK, Type: unix.RTN_UNICAST, Table: fw.TableUnderlay})
 		have[dstKey(r.Dst)] = true
 	}
 	for _, r := range all {
@@ -464,7 +501,10 @@ func (m *Manager) SyncUnderlay() {
 		have[dstKey(r.Dst)] = true
 		want = append(want, netlink.Route{Dst: r.Dst, Type: unix.RTN_THROW, Table: fw.TableUnderlay})
 	}
-	syncTable(fw.TableUnderlay, want)
+	if m.routeErr == nil {
+		m.routeErr = map[string]string{}
+	}
+	syncTable(fw.TableUnderlay, want, m.routeErr)
 	ensureRule(prioUnderlay, fw.TableUnderlay, fw.MarkBypass, false, len(want) > 0)
 	if !m.underlay {
 		// Replies carry no mark; restore it from the connection so strict
@@ -513,8 +553,9 @@ func routeKey(r netlink.Route) string {
 	return k
 }
 
-// syncTable makes table hold exactly want.
-func syncTable(table int, want []netlink.Route) {
+// syncTable makes table hold exactly want. A route that keeps failing is
+// logged once (errs remembers it), not on every pass.
+func syncTable(table int, want []netlink.Route, errs map[string]string) {
 	keep := map[string]bool{}
 	for _, r := range want {
 		keep[routeKey(r)] = true
@@ -529,8 +570,16 @@ func syncTable(table int, want []netlink.Route) {
 	}
 	for _, r := range want {
 		if keep[routeKey(r)] {
+			k := routeKey(r)
 			if err := netlink.RouteReplace(&r); err != nil {
-				log.Printf("wg: underlay route %s: %v", dstKey(r.Dst), err)
+				if errs != nil && errs[k] != err.Error() {
+					log.Printf("wg: underlay route %s: %v", dstKey(r.Dst), err)
+				}
+				if errs != nil {
+					errs[k] = err.Error()
+				}
+			} else if errs != nil {
+				delete(errs, k)
 			}
 		}
 	}

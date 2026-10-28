@@ -154,6 +154,9 @@ func hexToB64(h string) string {
 	return k.String()
 }
 
+// Ensure is a no-op: the Wintun adapter belongs to this process.
+func (m *Manager) Ensure(bool) (bool, error) { return false, nil }
+
 // SyncUnderlay is Linux only for now.
 func (m *Manager) SyncUnderlay() {}
 
