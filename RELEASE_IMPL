@@ -1,0 +1,12 @@
+# Which release files are built from the Rust port (rust/); every other one
+# comes from Go (go/). One asset name per line. Both builds use the same
+# file names, config, state and protocols, so nodes switch by their normal
+# update, and Go and Rust nodes work together in one mesh.
+#
+# Possible lines (see PARITY.md for what is verified on each):
+#   meshgate-linux-amd64
+#   meshgate-linux-arm64
+#   meshgate-linux-arm
+#   meshgate-freebsd-amd64
+#
+# Nothing listed (as now): every release file is the Go build.

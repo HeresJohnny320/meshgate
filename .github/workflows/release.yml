@@ -60,14 +60,28 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.version.outputs.sha }}
+      # Every release file is built from Go; the ones listed in RELEASE_IMPL
+      # are then rebuilt from the Rust port (same names, see PARITY.md).
+      - id: impl
+        run: echo "rust=$(grep -v '^#' RELEASE_IMPL | xargs)" >> "$GITHUB_OUTPUT"
+      - name: stamp the changelog with this version
+        run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" go/internal/changelog/CHANGELOG.md
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go/go.mod
       - run: go test ./...
-      - name: stamp the changelog with this version
-        run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" internal/changelog/CHANGELOG.md
-      - name: build Linux, FreeBSD/pfSense and Windows
+        working-directory: go
+      - name: build Linux, FreeBSD/pfSense and Windows (Go)
+        working-directory: go
         run: make release VERSION=${{ needs.version.outputs.tag }}
+      - name: rebuild the RELEASE_IMPL files from Rust
+        if: steps.impl.outputs.rust != ''
+        working-directory: rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          cargo install cross --locked
+          cargo test --locked
+          make release-assets VERSION=${{ needs.version.outputs.tag }} ASSETS="${{ steps.impl.outputs.rust }}"
       - uses: actions/upload-artifact@v4
         with:
           name: binaries
@@ -87,14 +101,15 @@ jobs:
           ref: ${{ needs.version.outputs.sha }}
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version-file: go/go.mod
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - name: stamp the changelog with this version
-        run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" internal/changelog/CHANGELOG.md
+        run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" go/internal/changelog/CHANGELOG.md
       - name: Go core (gomobile)
+        working-directory: go
         run: |
           go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
@@ -111,7 +126,7 @@ jobs:
             echo "::warning title=APK not release-signed::ANDROID_KEYSTORE_BASE64 is not set, so the APK is signed with a throwaway debug key and cannot update an installed app. See README > Releases."
           fi
       - name: APK
-        working-directory: mobile/android
+        working-directory: go/mobile/android
         env:
           MESHGATE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           MESHGATE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}

@@ -1,0 +1,4 @@
+# The release version must reach the build inside cross's containers:
+# a binary without it reports "dev" and never self-updates.
+[build.env]
+passthrough = ["MESHGATE_VERSION"]

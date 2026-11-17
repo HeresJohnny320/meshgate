@@ -633,7 +633,7 @@ one machine). `c` in the TUI drops a local override again.
 **What changed:** the dashboard's **Changelog** tab, the TUI's **CHANGES** tab
 (`7`) and the app's **Updates → What's new** show the changes of the version
 you run (`+` added, `-` removed, `~` changed or fixed). The file is
-[internal/changelog/CHANGELOG.md](internal/changelog/CHANGELOG.md); new entries go
+[go/internal/changelog/CHANGELOG.md](go/internal/changelog/CHANGELOG.md); new entries go
 under `## Unreleased`, which each release build stamps with its version.
 
 **Uninstall:**
@@ -813,6 +813,11 @@ something? Please open an issue.
 
 ### Code layout
 
+The Go version is in `go/`; the Rust rewrite is in `rust/` (what it keeps
+compatible and what is verified, in [PARITY.md](PARITY.md)). Releases build
+every file from Go and rebuild the ones listed in `RELEASE_IMPL` from Rust, so
+the switch can go one platform at a time. Paths below are inside `go/`.
+
 - `internal/store`: replicated config (LWW registers, hybrid logical clock,
   local-scope overrides, atomic JSON file).
 - `internal/syncer`: push-on-change + 5 s anti-entropy between server nodes.
@@ -829,18 +834,26 @@ something? Please open an issue.
 ### Development
 
 ```sh
-make test     # unit tests
-make lab      # Linux end-to-end: 9 network namespaces, real WireGuard + nftables,
-              # VPS + 2nd relay + home NAT + NAS + laptop + simulated phone + friend
-make release  # linux amd64/arm64/arm, freebsd amd64/arm64, windows zips in dist/
+make test       # Go unit tests (cd rust && make test for the Rust ones)
+make lab        # Linux end-to-end: 9 network namespaces, real WireGuard + nftables,
+                # VPS + 2nd relay + home NAT + NAS + laptop + simulated phone + friend
+make rust-lab   # the same lab against the Rust build
+make mixed-lab  # the lab with Go and Rust nodes in one mesh, both ways round
+make upgrade-test  # a running Go node switches to the Rust build in place, and back
+make release    # linux amd64/arm64/arm, freebsd amd64/arm64, windows zips in dist/
+make bench      # RAM and CPU of the Go build against the Rust build
 ```
+
+`bench/bench.sh watch` measures the meshgate running on a server (Linux or
+pfSense) without changing anything. `test/e2e/acme.sh` checks HTTPS routes
+against Pebble (Let's Encrypt's test server) in a network namespace.
 
 `make lab` needs unprivileged user namespaces (default on Fedora/Ubuntu).
 `test/freebsd/lab.sh` is the FreeBSD/pfSense end-to-end test: run it as root on
 FreeBSD 14+. It uses vnet jails, real `if_wg` and pf with pfSense's anchor
 layout.
 
-Mobile builds:
+Mobile builds (in `go/`):
 
 ```sh
 go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init
@@ -848,9 +861,9 @@ make android-core   # → mobile/android/app/libs/meshcore.aar (needs the Androi
 make ios-core       # → mobile/ios/Meshcore.xcframework (needs macOS + Xcode)
 ```
 
-- **Android:** `cd mobile/android && ./gradlew assembleDebug` (or Android
+- **Android:** `cd go/mobile/android && ./gradlew assembleDebug` (or Android
   Studio). Needs JDK 17 and the Android SDK.
-- **iOS** (on hold): `cd mobile/ios && xcodegen`, open `MeshGate.xcodeproj`,
+- **iOS** (on hold): `cd go/mobile/ios && xcodegen`, open `MeshGate.xcodeproj`,
   set your team and enable the Network Extension + App Group capabilities.
   Needs a paid Apple developer account.
 
@@ -883,7 +896,7 @@ Early but working.
 |---|---|
 | Linux | unit tests and the namespace lab (every push) |
 | FreeBSD / pfSense | the jail lab on FreeBSD 14.5 and `test/freebsd/pfsense_install.sh` (install, reboot, uninstall), using pfSense's anchor layout; first real pfSense installs are in use |
-| Phone engine | `mobile/phonesim` in the Linux lab; the Android app is in early use on real phones |
+| Phone engine | `go/mobile/phonesim` in the Linux lab; the Android app is in early use on real phones |
 | Windows | compiles and vets; not yet run on real Windows |
 | iOS | not released |
 

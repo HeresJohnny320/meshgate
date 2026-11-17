@@ -7,24 +7,27 @@
 /phonesim
 
 # Go
-/vendor/
+/go/vendor/
+
+# Rust
+/rust/target/
 
 # Android
-/mobile/android/.gradle/
-/mobile/android/build/
-/mobile/android/app/build/
-/mobile/android/local.properties
-/mobile/android/.idea/
-/mobile/android/*.iml
-/mobile/android/app/libs/*.aar
-/mobile/android/app/libs/*.jar
+/go/mobile/android/.gradle/
+/go/mobile/android/build/
+/go/mobile/android/app/build/
+/go/mobile/android/local.properties
+/go/mobile/android/.idea/
+/go/mobile/android/*.iml
+/go/mobile/android/app/libs/*.aar
+/go/mobile/android/app/libs/*.jar
 *.keystore
 *.jks
 
 # iOS
-/mobile/ios/Meshcore.xcframework/
-/mobile/ios/*.xcodeproj/
-/mobile/ios/build/
+/go/mobile/ios/Meshcore.xcframework/
+/go/mobile/ios/*.xcodeproj/
+/go/mobile/ios/build/
 xcuserdata/
 
 # Editors / OS

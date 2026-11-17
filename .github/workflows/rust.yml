@@ -1,0 +1,62 @@
+name: rust
+
+# The Rust rewrite (rust/, see PARITY.md). Releases rebuild the files listed
+# in RELEASE_IMPL from it (the release workflow runs the unit tests again).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "rust/**"
+      - "test/**"
+      - "go/internal/webui/static/**"
+      - "go/internal/changelog/**"
+      - "go/internal/pfsense/files/**"
+      - ".github/workflows/rust.yml"
+  pull_request:
+    paths: ["rust/**", "test/**", ".github/workflows/rust.yml"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: rustup target add x86_64-unknown-freebsd
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: rust-${{ hashFiles('rust/Cargo.lock') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - name: FreeBSD/pfSense build type-checks
+        run: cargo check --locked --target x86_64-unknown-freebsd
+
+  lab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: rust-lab-${{ hashFiles('rust/Cargo.lock') }}
+      - run: sudo apt-get update && sudo apt-get install -y wireguard-tools nftables iptables
+      - name: build the Rust binary and the phone simulator
+        run: |
+          (cd rust && cargo build --release --locked)
+          (cd go && go build -o ../dist/phonesim ./mobile/phonesim)
+      - name: end-to-end lab against the Rust build
+        run: sudo unshare -n -m sh test/e2e/lab.sh "$PWD/rust/target/release/meshgate" "$PWD/dist/phonesim"

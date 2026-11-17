@@ -406,6 +406,9 @@ check "history download: a chosen period at 5-minute detail" "echo '$H' | python
 check "history download: too much detail is refused" "! api home \"history?from=$((NOW-86400*365))&to=$NOW&step=300\" >/dev/null"
 api vps history-settings '{"log_server":"","log_days":365}' >/dev/null
 
+# The update replaces the running binary itself: skipped in mixed meshes,
+# where "$BIN" is a script choosing between two builds (test/e2e/mixed.sh).
+if [ -z "${MESHGATE_LAB_NO_UPDATE:-}" ]; then
 echo; echo "== remote update: vps tells home to install the latest release"
 # Fake GitHub on the "internet": release v9.9.9 is this binary plus a few
 # bytes (still runs, different checksum), with matching SHA256SUMS.
@@ -438,6 +441,7 @@ check "home installed the verified release and exited to restart" "! kill -0 $HO
 BIN="$D/meshgate-home"; start home; BIN=$BIN_SAVED
 check "home runs again after the update" "api home view >/dev/null"
 unset MESHGATE_UPDATE_URL MESHGATE_UPDATE_DEV
+fi
 
 if [ "$FAILED" = 1 ]; then
   echo "--- phone log"; tail -30 "$D/phone.log"

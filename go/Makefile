@@ -1,6 +1,7 @@
 VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/heresjohnny320/meshgate/internal/agent.Version=$(VERSION)
-DIST := dist
+# Output goes to the repository's top-level dist/, shared with the Rust build.
+DIST := ../dist
 WINTUN := 0.14.1
 
 .PHONY: build test lab release android-core ios-core clean
@@ -16,7 +17,7 @@ test:
 # on kernels that allow unprivileged user namespaces).
 lab: build
 	go build -o $(DIST)/phonesim ./mobile/phonesim
-	unshare -r -n -m sh test/e2e/lab.sh $(abspath $(DIST)/meshgate) $(abspath $(DIST)/phonesim)
+	unshare -r -n -m sh ../test/e2e/lab.sh $(abspath $(DIST)/meshgate) $(abspath $(DIST)/phonesim)
 
 release:
 	for arch in amd64 arm64 arm; do \
@@ -44,4 +45,4 @@ ios-core:
 	gomobile bind -target=ios -iosversion 16.0 -ldflags '$(LDFLAGS)' -o mobile/ios/Meshcore.xcframework ./mobile/core
 
 clean:
-	rm -rf $(DIST) mobile/android/app/libs/meshcore.aar mobile/ios/Meshcore.xcframework
+	rm -rf $(DIST)/meshgate $(DIST)/meshgate-* $(DIST)/win-* $(DIST)/phonesim mobile/android/app/libs/meshcore.aar mobile/ios/Meshcore.xcframework
