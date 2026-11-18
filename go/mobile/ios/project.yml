@@ -1,5 +1,6 @@
 # Generate the Xcode project with XcodeGen:  brew install xcodegen && xcodegen
-# Meshcore.xcframework is built by `make ios-core` (gomobile bind).
+# Meshcore.xcframework is built by `make ios-core` in rust/ (the Rust engine;
+# Shared/Meshcore.swift wraps its C API).
 name: MeshGate
 options:
   bundleIdPrefix: dev.meshgate

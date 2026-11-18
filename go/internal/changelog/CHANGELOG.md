@@ -3,7 +3,7 @@
 `+` added · `-` removed · `~` changed or fixed
 
 ## Unreleased
-+ A Rust build of meshgate that can replace the Go one in place, platform by platform (same files, settings and protocols; Go and Rust nodes work together). It uses about 60 % less memory. Releases stay the Go build until switched on in RELEASE_IMPL
++ meshgate is now built in Rust on every platform. It replaces the Go build in place when you update (same files, settings and protocols; Go and Rust nodes work together) and uses about 60 % less memory
 + Linux servers open what they need in ufw or firewalld by themselves: meshgate's ports, 80 and 443 on an HTTPS edge, and every port forward. Rules are tagged "meshgate: ..." and removed again when the forward or route is deleted or turned off; rules you added yourself are never touched
 + Per-server switch "Open ports in ufw / firewalld automatically" (Nodes → Edit, TUI `1`, `e`)
 ~ Port forwards, relays and exit nodes work on Linux servers running ufw or Docker (their FORWARD policy DROP used to block them silently)

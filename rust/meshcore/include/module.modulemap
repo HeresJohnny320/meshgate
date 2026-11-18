@@ -1,0 +1,5 @@
+module Meshcore {
+    header "meshcore.h"
+    link "meshcore"
+    export *
+}

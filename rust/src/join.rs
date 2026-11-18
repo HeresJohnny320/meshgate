@@ -385,8 +385,19 @@ fn auth_client(s: &Store, h: &str) -> Option<Node> {
 
 /// One client sync round against a server's join API.
 pub async fn sync_client(srv: &Server, node_id: &str, secret: &str, body: &ClientSync) -> Result<ClientSync, String> {
+    sync_client_hooked(srv, node_id, secret, body, None).await
+}
+
+/// sync_client with a socket hook (phones keep it outside their VPN).
+pub async fn sync_client_hooked(
+    srv: &Server,
+    node_id: &str,
+    secret: &str,
+    body: &ClientSync,
+    hook: Option<&crate::util::SockHook>,
+) -> Result<ClientSync, String> {
     let auth = format!("Bearer {node_id}:{secret}");
-    let res = http::tls(
+    let res = http::tls_hooked(
         &srv.addr,
         &http::host_of(&srv.addr),
         tlsx::pinned(&srv.fp),
@@ -395,6 +406,7 @@ pub async fn sync_client(srv: &Server, node_id: &str, secret: &str, body: &Clien
         &[("Content-Type", "application/json"), ("Authorization", &auth)],
         crate::gojson::marshal(body).into(),
         Duration::from_secs(10),
+        hook,
     )
     .await?;
     if res.status != StatusCode::OK {
@@ -404,13 +416,18 @@ pub async fn sync_client(srv: &Server, node_id: &str, secret: &str, body: &Clien
 }
 
 /// Redeems a token against the first server that answers.
-pub async fn redeem(tok: &Token, mut req: Request) -> Result<Response, String> {
+pub async fn redeem(tok: &Token, req: Request) -> Result<Response, String> {
+    redeem_hooked(tok, req, None).await
+}
+
+/// redeem with a socket hook.
+pub async fn redeem_hooked(tok: &Token, mut req: Request, hook: Option<&crate::util::SockHook>) -> Result<Response, String> {
     req.token_id = tok.id.clone();
     req.secret = tok.secret.clone();
     let body = bytes::Bytes::from(crate::gojson::marshal(&req));
     let mut last = String::from("no servers in token");
     for srv in &tok.servers {
-        match do_one(srv, body.clone()).await {
+        match do_one(srv, body.clone(), hook).await {
             Ok(r) => return Ok(r),
             Err((msg, permanent)) => {
                 last = format!("{}: {msg}", srv.addr);
@@ -423,8 +440,8 @@ pub async fn redeem(tok: &Token, mut req: Request) -> Result<Response, String> {
     Err(last)
 }
 
-async fn do_one(srv: &Server, body: bytes::Bytes) -> Result<Response, (String, bool)> {
-    let res = http::tls(
+async fn do_one(srv: &Server, body: bytes::Bytes, hook: Option<&crate::util::SockHook>) -> Result<Response, (String, bool)> {
+    let res = http::tls_hooked(
         &srv.addr,
         &http::host_of(&srv.addr),
         tlsx::pinned(&srv.fp),
@@ -433,6 +450,7 @@ async fn do_one(srv: &Server, body: bytes::Bytes) -> Result<Response, (String, b
         &[("Content-Type", "application/json")],
         body,
         Duration::from_secs(15),
+        hook,
     )
     .await
     .map_err(|e| (e, false))?;

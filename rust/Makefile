@@ -10,7 +10,12 @@ LINUX := amd64:x86_64-unknown-linux-musl arm64:aarch64-unknown-linux-musl arm:ar
 FREEBSD := amd64:x86_64-unknown-freebsd arm64:aarch64-unknown-freebsd
 WINDOWS := amd64:x86_64-pc-windows-gnu arm64:aarch64-pc-windows-gnullvm
 
-.PHONY: build test lab release release-assets clean
+# Builds $$target: cross for most targets, build-extra.sh for the two cross
+# has no image for (pfSense arm64, Windows arm64).
+XBUILD = case $$target in aarch64-unknown-freebsd|aarch64-pc-windows-gnullvm) ./build-extra.sh $$target;; \
+	*) cross build --release --locked --target $$target;; esac
+
+.PHONY: build test lab release release-darwin android-core ios-core clean
 
 build:
 	cargo build --release --locked
@@ -21,41 +26,73 @@ test:
 	cargo clippy --locked -- -D warnings
 	cargo test --locked
 
-# End-to-end test with real WireGuard in network namespaces. The phone
-# simulator is the Go one (the phone core stays Go).
+# End-to-end test with real WireGuard in network namespaces, with the phone
+# engine run by the phone simulator.
 lab: build
-	cd ../go && go build -o $(abspath $(DIST))/phonesim ./mobile/phonesim
+	cargo build --release --locked --bin phonesim
+	cp target/release/phonesim $(DIST)/phonesim
 	unshare -r -n -m sh ../test/e2e/lab.sh $(abspath $(DIST)/meshgate) $(abspath $(DIST)/phonesim)
 
-# Needs `cross` (cargo install cross) and Docker or Podman.
+# Every Linux, FreeBSD/pfSense and Windows release file (the same names the
+# Go build used, so nodes update to them). Needs `cross` (cargo install cross)
+# and Docker or Podman, plus clang, lld and llvm-ar for build-extra.sh.
 release:
 	mkdir -p $(DIST)
 	for p in $(LINUX) $(FREEBSD); do \
 		arch=$${p%%:*}; target=$${p#*:}; \
 		case $$target in *freebsd*) os=freebsd;; *) os=linux;; esac; \
-		cross build --release --locked --target $$target && \
+		{ $(XBUILD); } && \
 		cp target/$$target/release/meshgate $(DIST)/meshgate-$$os-$$arch || exit 1; \
 	done
 	test -f $(DIST)/wintun.zip || curl -fsSL -o $(DIST)/wintun.zip https://www.wintun.net/builds/wintun-$(WINTUN).zip
 	for p in $(WINDOWS); do \
 		arch=$${p%%:*}; target=$${p#*:}; \
-		cross build --release --locked --target $$target && \
-		rm -rf $(DIST)/win-$$arch && mkdir -p $(DIST)/win-$$arch && \
+		{ $(XBUILD); } && \
+		mkdir -p $(DIST)/win-$$arch && \
 		cp target/$$target/release/meshgate.exe $(DIST)/win-$$arch/ && \
 		unzip -q -j -o $(DIST)/wintun.zip wintun/bin/$$arch/wintun.dll -d $(DIST)/win-$$arch && \
-		(cd $(DIST)/win-$$arch && zip -q -9 ../meshgate-windows-$$arch.zip meshgate.exe wintun.dll) || exit 1; \
+		(cd $(DIST)/win-$$arch && zip -q -9 -FS ../meshgate-windows-$$arch.zip meshgate.exe wintun.dll) || exit 1; \
 	done
 
-# Rebuilds only the given release files over the Go ones, e.g.
-# make release-assets ASSETS="meshgate-linux-amd64 meshgate-freebsd-amd64"
-release-assets:
-	case "$(VERSION)" in v[0-9]*) ;; *) echo "VERSION must be a release tag (vX.Y.Z), got '$(VERSION)'"; exit 1;; esac
+# macOS release files (new with the Rust port; the Go build had none). Needs
+# macOS with Xcode and both Rust darwin targets.
+release-darwin:
 	mkdir -p $(DIST)
-	for a in $(ASSETS); do \
-		target=$$(./target-for.sh $$a) || exit 1; \
-		cross build --release --locked --target $$target && \
-		cp target/$$target/release/meshgate $(DIST)/$$a || exit 1; \
+	for p in amd64:x86_64-apple-darwin arm64:aarch64-apple-darwin; do \
+		arch=$${p%%:*}; target=$${p#*:}; \
+		MACOSX_DEPLOYMENT_TARGET=11.0 cargo build --release --locked --target $$target && \
+		cp target/$$target/release/meshgate $(DIST)/meshgate-darwin-$$arch || exit 1; \
 	done
+
+# The Android app's engine (libmeshcore.so per ABI). Needs cargo-ndk
+# (cargo install cargo-ndk), ANDROID_NDK_HOME and the Rust Android targets.
+JNILIBS := ../go/mobile/android/app/src/main/jniLibs
+ANDROID_ABIS := arm64-v8a armeabi-v7a x86_64 x86
+android-core:
+	cargo ndk $(foreach a,$(ANDROID_ABIS),-t $(a)) -P 26 build --release --locked -p meshcore
+	for abi in $(ANDROID_ABIS); do \
+		case $$abi in arm64-v8a) t=aarch64-linux-android;; armeabi-v7a) t=armv7-linux-androideabi;; \
+			x86_64) t=x86_64-linux-android;; x86) t=i686-linux-android;; esac; \
+		mkdir -p $(JNILIBS)/$$abi && cp target/$$t/release/libmeshcore.so $(JNILIBS)/$$abi/ || exit 1; \
+	done
+
+# The iOS app's engine: Meshcore.xcframework (static libmeshcore.a plus the
+# C header and module map; Swift wrappers in go/mobile/ios/Shared/Meshcore.swift).
+# Needs macOS with Xcode and the Rust iOS targets.
+XCFRAMEWORK := ../go/mobile/ios/Meshcore.xcframework
+ios-core:
+	for t in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do \
+		IPHONEOS_DEPLOYMENT_TARGET=16.0 cargo build --release --locked -p meshcore --target $$t || exit 1; \
+	done
+	mkdir -p target/ios-sim
+	lipo -create target/aarch64-apple-ios-sim/release/libmeshcore.a target/x86_64-apple-ios/release/libmeshcore.a \
+		-output target/ios-sim/libmeshcore.a
+	rm -rf $(XCFRAMEWORK)
+	xcodebuild -create-xcframework \
+		-library target/aarch64-apple-ios/release/libmeshcore.a -headers meshcore/include \
+		-library target/ios-sim/libmeshcore.a -headers meshcore/include \
+		-output $(XCFRAMEWORK)
 
 clean:
 	cargo clean
+	rm -rf $(JNILIBS) $(XCFRAMEWORK)

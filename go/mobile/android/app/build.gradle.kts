@@ -62,8 +62,8 @@ android.sourceSets["main"].assets.srcDir(dashboardAssets)
 tasks.named("preBuild") { dependsOn(copyDashboard) }
 
 dependencies {
-    // Built by `make android-core` (gomobile bind) from ../../core
-    implementation(files("libs/meshcore.aar"))
+    // The engine is libmeshcore.so in src/main/jniLibs, built from rust/meshcore
+    // (`make android-core` in rust/), with its Java API in dev.meshgate.meshcore.
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.material3:material3")

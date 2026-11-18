@@ -1,5 +1,5 @@
 #!/bin/sh
-# meshgate installer for Linux and FreeBSD/pfSense.
+# meshgate installer for Linux, FreeBSD/pfSense and macOS.
 #
 #   curl -fsSL https://raw.githubusercontent.com/heresjohnny320/meshgate/main/scripts/install.sh | sudo sh
 #   curl -fsSL .../install.sh | sudo sh -s -- join <token>      # join without questions about the role
@@ -28,8 +28,8 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "run as root (sudo)"
 OS=$(uname -s)
 case "$OS" in
-  Linux|FreeBSD) ;;
-  *) die "meshgate nodes run on Linux or FreeBSD/pfSense; use the phone app for iOS/Android" ;;
+  Linux|FreeBSD|Darwin) ;;
+  *) die "meshgate nodes run on Linux, FreeBSD/pfSense or macOS; use the phone app for iOS/Android" ;;
 esac
 GOOS=$(echo "$OS" | tr '[:upper:]' '[:lower:]')
 PFSENSE=0
@@ -66,7 +66,9 @@ pm_install() {
   else return 1; fi
 }
 
-if [ "$OS" = FreeBSD ]; then
+if [ "$OS" = Darwin ]; then
+  say "macOS: meshgate uses its built-in userspace WireGuard"
+elif [ "$OS" = FreeBSD ]; then
   say "Installing WireGuard tools"
   if ! command -v wg >/dev/null; then
     if [ $PFSENSE = 1 ]; then
@@ -107,6 +109,7 @@ fi
 fi
 
 say "Installing meshgate"
+mkdir -p /usr/local/bin
 if [ -n "${MESHGATE_BIN:-}" ]; then
   install -m 0755 "$MESHGATE_BIN" /usr/local/bin/meshgate
 else
@@ -123,7 +126,9 @@ else
   # Check the binary against the release's published checksums.
   fetch_url "$BASE/SHA256SUMS" "$SUMS" || die "could not download SHA256SUMS for verification"
   WANT=$(awk -v f="$FILE" '$2 == f || $2 == "*" f { print $1 }' "$SUMS")
-  if command -v sha256sum >/dev/null; then GOT=$(sha256sum "$TMP" | awk '{print $1}'); else GOT=$(sha256 -q "$TMP"); fi
+  if command -v sha256sum >/dev/null; then GOT=$(sha256sum "$TMP" | awk '{print $1}')
+  elif command -v shasum >/dev/null; then GOT=$(shasum -a 256 "$TMP" | awk '{print $1}')
+  else GOT=$(sha256 -q "$TMP"); fi
   [ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || { rm -f "$TMP" "$SUMS"; die "checksum mismatch for $FILE: refusing to install"; }
   say "Checksum verified"
   install -m 0755 "$TMP" /usr/local/bin/meshgate
@@ -133,7 +138,9 @@ fi
 
 HERE=$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)
 RAW="https://raw.githubusercontent.com/$REPO/main/packaging"
-if [ "$OS" = FreeBSD ]; then
+if [ "$OS" = Darwin ]; then
+  CONF=/etc/meshgate/node.json # the launchd job is set up below
+elif [ "$OS" = FreeBSD ]; then
   RC=/usr/local/etc/rc.d/meshgate.sh
   if [ -f "$HERE/../packaging/meshgate.rc" ]; then cp "$HERE/../packaging/meshgate.rc" "$RC"; else fetch_url "$RAW/meshgate.rc" "$RC"; fi
   chmod 0755 "$RC"
@@ -175,7 +182,7 @@ fi
 # forward) are opened and closed by the running agent itself, tagged
 # "meshgate: ..." (Nodes > Edit > "Open ports in ufw / firewalld").
 # (On FreeBSD/pfSense meshgate opens its ports itself in its pf anchor.)
-if [ "$OS" = FreeBSD ]; then
+if [ "$OS" = FreeBSD ] || [ "$OS" = Darwin ]; then
   :
 elif command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
   say "Configuring firewalld (meshgate opens its ports and forwards automatically)"
@@ -187,7 +194,9 @@ elif command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: acti
   ufw route allow in on mg0 >/dev/null; ufw route allow out on mg0 >/dev/null
 fi
 
-if [ "$OS" = FreeBSD ]; then
+if [ "$OS" = Darwin ]; then
+  /usr/local/bin/meshgate service install >/dev/null
+elif [ "$OS" = FreeBSD ]; then
   "$RC" restart </dev/null >/dev/null 2>&1
 else
   systemctl enable --now meshgate
@@ -197,7 +206,7 @@ until /usr/local/bin/meshgate status >/dev/null 2>&1; do
   i=$((i+1)); [ $i -gt 30 ] && break; sleep 1
 done
 /usr/local/bin/meshgate status || {
-  if [ "$OS" = FreeBSD ]; then tail -20 /var/log/meshgate.log; else journalctl -u meshgate -n 20 --no-pager; fi
+  if [ "$OS" = Linux ]; then journalctl -u meshgate -n 20 --no-pager; else tail -20 /var/log/meshgate.log; fi
   die "meshgate did not start"
 }
 if grep -q web_listen "$CONF" 2>/dev/null; then

@@ -3,9 +3,11 @@
 //! through the standard UAPI socket (/var/run/wireguard/<iface>.sock), so
 //! `wg show` works with it too.
 
+#[cfg(target_os = "linux")]
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::IpAddr;
+#[cfg(target_os = "linux")]
 use std::sync::Mutex;
 
 use crate::wg::types as nl;

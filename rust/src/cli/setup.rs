@@ -331,8 +331,8 @@ fn gather_machine(kind: &str, f: &Flags, port: i64) -> Answers {
     if kind != model::NODE_SERVER {
         return a;
     }
-    // Windows nodes cannot route into their LAN; share nothing.
-    let no_routes = f.get_bool("no-routes") || cfg!(windows);
+    // Windows and macOS nodes cannot route into their LAN; share nothing.
+    let no_routes = f.get_bool("no-routes") || cfg!(any(windows, target_os = "macos"));
     let lan_flag = f.get_str("lan-policy");
     if !a.endpoints.is_empty() || !interactive {
         // Explicit flags (or -y): auto-detect only what was not given.

@@ -36,13 +36,9 @@ release:
 		(cd $(DIST)/win-$$arch && zip -q -9 ../meshgate-windows-$$arch.zip meshgate.exe wintun.dll); \
 	done
 
-# Mobile cores (need gomobile: go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init)
-android-core:
-	mkdir -p mobile/android/app/libs
-	gomobile bind -target=android -androidapi 26 -javapkg=dev.meshgate -ldflags '$(LDFLAGS)' -o mobile/android/app/libs/meshcore.aar ./mobile/core
-
-ios-core:
-	gomobile bind -target=ios -iosversion 16.0 -ldflags '$(LDFLAGS)' -o mobile/ios/Meshcore.xcframework ./mobile/core
+# The phone apps' engine is Rust now (rust/meshcore); these build it.
+android-core ios-core:
+	$(MAKE) -C ../rust $@ VERSION=$(VERSION)
 
 clean:
 	rm -rf $(DIST)/meshgate $(DIST)/meshgate-* $(DIST)/win-* $(DIST)/phonesim mobile/android/app/libs/meshcore.aar mobile/ios/Meshcore.xcframework

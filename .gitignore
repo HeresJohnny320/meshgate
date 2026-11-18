@@ -40,3 +40,4 @@ Thumbs.db
 # Local meshgate state when running from the source tree
 node.json
 state.json
+/go/mobile/android/app/src/main/jniLibs/

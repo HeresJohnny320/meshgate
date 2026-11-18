@@ -8,5 +8,18 @@
 #   meshgate-linux-arm64
 #   meshgate-linux-arm
 #   meshgate-freebsd-amd64
+#   meshgate-freebsd-arm64
+#   meshgate-windows-amd64.zip
+#   meshgate-windows-arm64.zip
 #
-# Nothing listed (as now): every release file is the Go build.
+# macOS files (meshgate-darwin-amd64/arm64) are always Rust: Go never had them.
+#
+# To go back to Go for a file, delete its line: the next release ships Go
+# again (a newer version), and nodes update to it as usual.
+meshgate-linux-amd64
+meshgate-linux-arm64
+meshgate-linux-arm
+meshgate-freebsd-amd64
+meshgate-freebsd-arm64
+meshgate-windows-amd64.zip
+meshgate-windows-arm64.zip

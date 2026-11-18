@@ -1,11 +1,12 @@
 name: release
 
-# Every push to main that passes ci is released automatically with the next
+# Every push to main that passes the rust workflow (tests on every platform)
+# is released automatically with the next
 # patch version (v0.2.0 -> v0.2.1). Push a tag yourself (e.g. v0.3.0) for a
 # bigger step; automatic releases continue from the newest tag.
 on:
   workflow_run:
-    workflows: [ci]
+    workflows: [rust]
     types: [completed]
     branches: [main]
   push:
@@ -22,7 +23,7 @@ concurrency:
 
 jobs:
   version:
-    # Only pushes whose ci passed (not pull requests, not failed runs).
+    # Only pushes whose rust workflow passed (not pull requests, not failed runs).
     if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     outputs:
@@ -60,28 +61,18 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.version.outputs.sha }}
-      # Every release file is built from Go; the ones listed in RELEASE_IMPL
-      # are then rebuilt from the Rust port (same names, see PARITY.md).
-      - id: impl
-        run: echo "rust=$(grep -v '^#' RELEASE_IMPL | xargs)" >> "$GITHUB_OUTPUT"
       - name: stamp the changelog with this version
         run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" go/internal/changelog/CHANGELOG.md
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-      - run: go test ./...
-        working-directory: go
-      - name: build Linux, FreeBSD/pfSense and Windows (Go)
-        working-directory: go
-        run: make release VERSION=${{ needs.version.outputs.tag }}
-      - name: rebuild the RELEASE_IMPL files from Rust
-        if: steps.impl.outputs.rust != ''
+      # Every release file is the Rust build (rust/), under the names the Go
+      # build used, so Go nodes update to it in place.
+      - name: build Linux, FreeBSD/pfSense and Windows
         working-directory: rust
         run: |
           rustup toolchain install stable --profile minimal
           cargo install cross --locked
+          sudo apt-get update && sudo apt-get install -y clang lld llvm   # build-extra.sh (arm64 pfSense/Windows)
           cargo test --locked
-          make release-assets VERSION=${{ needs.version.outputs.tag }} ASSETS="${{ steps.impl.outputs.rust }}"
+          make release VERSION=${{ needs.version.outputs.tag }}
       - uses: actions/upload-artifact@v4
         with:
           name: binaries
@@ -99,21 +90,19 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.version.outputs.sha }}
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
       - name: stamp the changelog with this version
         run: sed -i "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" go/internal/changelog/CHANGELOG.md
-      - name: Go core (gomobile)
-        working-directory: go
+      - name: engine (rust/meshcore)
+        working-directory: rust
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest golang.org/x/mobile/cmd/gobind@latest
+          rustup toolchain install stable --profile minimal
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+          cargo install cargo-ndk --locked
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
-          gomobile init
           make android-core VERSION=${{ needs.version.outputs.tag }}
       - name: release signing key (optional)
         env:
@@ -140,8 +129,32 @@ jobs:
           name: android
           path: meshgate-android.apk
 
+  # macOS nodes exist only in the Rust port. A failure here leaves them out
+  # of the release instead of blocking it.
+  macos:
+    needs: version
+    if: needs.version.outputs.tag != ''
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.sha }}
+      - name: stamp the changelog with this version
+        run: sed -i '' "s/^## Unreleased$/## ${{ needs.version.outputs.tag }} · $(date -u +%F)/" go/internal/changelog/CHANGELOG.md
+      - name: build
+        working-directory: rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          make release-darwin VERSION=${{ needs.version.outputs.tag }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/meshgate-darwin-*
+
   publish:
-    needs: [version, binaries, android]
+    needs: [version, binaries, android, macos]
+    if: always() && needs.binaries.result == 'success' && needs.android.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

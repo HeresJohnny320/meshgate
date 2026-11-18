@@ -1,0 +1,16 @@
+[package]
+name = "meshcore"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "The phone apps' native library: meshgate's mobile engine for Android (JNI) and iOS (C)"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+meshgate = { path = ".." }
+libc = "0.2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

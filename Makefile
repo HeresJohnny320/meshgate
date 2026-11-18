@@ -1,11 +1,10 @@
-# meshgate: the Go version lives in go/, the Rust rewrite in rust/ (see
-# PARITY.md). Releases build every file from Go and rebuild the ones listed
-# in RELEASE_IMPL from Rust.
+# meshgate is built from rust/; releases are the Rust build only. The old Go
+# version stays in go/ for comparing (go, mixed-lab, upgrade-test, bench).
 
 .PHONY: build test lab release bench go rust rust-lab mixed-lab upgrade-test clean
 
 build test lab release:
-	$(MAKE) -C go $@
+	$(MAKE) -C rust $@
 
 # Both builds side by side in dist/, for comparing.
 go:

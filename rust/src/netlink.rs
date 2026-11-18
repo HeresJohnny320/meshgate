@@ -139,6 +139,10 @@ impl Msg {
         self.buf.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     fn finish(&mut self, seq: u32) -> &[u8] {
         let len = self.buf.len() as u32;
         self.buf[0..4].copy_from_slice(&len.to_ne_bytes());

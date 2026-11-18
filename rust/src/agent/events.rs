@@ -94,7 +94,8 @@ fn read_raw_log(n: i64) -> Result<(Vec<String>, String), String> {
         }
         return Ok((split_lines(&o.out), "journalctl -u meshgate".into()));
     }
-    if cfg!(target_os = "freebsd") {
+    // FreeBSD's rc script and macOS's launchd job write the log file.
+    if cfg!(any(target_os = "freebsd", target_os = "macos")) {
         use std::io::{Read, Seek, SeekFrom};
         let mut f = std::fs::File::open(RAW_LOG_FILE).map_err(|e| e.to_string())?;
         let size = f.metadata().map(|m| m.len()).unwrap_or(0);

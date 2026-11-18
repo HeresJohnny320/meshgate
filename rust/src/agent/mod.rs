@@ -152,7 +152,7 @@ impl Agent {
         logf!("meshgate {}: node {} ({}) mesh ip {}", crate::VERSION, me.name, me.kind, me.mesh_ip);
 
         #[cfg(target_os = "linux")]
-        let control: Option<probe::Control> = Some(wg::mark_socket);
+        let control: Option<probe::Control> = Some(Arc::new(wg::mark_socket));
         #[cfg(not(target_os = "linux"))]
         let control: Option<probe::Control> = None;
         let prober = Prober::new(&self.cfg.node_id, mesh, control);
@@ -406,8 +406,11 @@ impl Agent {
                 exit_routes: exit_routes.clone(),
             });
             warn.extend(plan.warnings.iter().cloned());
-            if cfg!(windows) && (!plan.dnat.is_empty() || !plan.lans.is_empty() || plan.restricted || !plan.preserve_edge_ip.is_empty()) {
-                warn.push("Windows nodes cannot be a forward edge, share LAN subnets, enforce a restricted LAN policy or receive real client IPs; use Linux or pfSense for that".into());
+            if cfg!(any(windows, target_os = "macos"))
+                && (!plan.dnat.is_empty() || !plan.lans.is_empty() || plan.restricted || !plan.preserve_edge_ip.is_empty())
+            {
+                let os = if cfg!(windows) { "Windows" } else { "macOS" };
+                warn.push(format!("{os} nodes cannot be a forward edge, share LAN subnets, enforce a restricted LAN policy or receive real client IPs; use Linux or pfSense for that"));
             }
             for l in &plan.lans {
                 if l.iface.is_empty() && cfg!(target_os = "freebsd") {

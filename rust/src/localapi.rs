@@ -9,7 +9,9 @@ use hyper::{Method, StatusCode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::http::{self, Peer};
+use crate::http;
+#[cfg(unix)]
+use crate::http::Peer;
 
 /// Serves h on the socket path.
 #[cfg(unix)]

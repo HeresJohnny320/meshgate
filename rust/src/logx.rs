@@ -55,7 +55,11 @@ pub fn local(unix: i64) -> (i32, u32, u32, u32, u32, u32, i64) {
 
 #[cfg(not(unix))]
 pub fn local(unix: i64) -> (i32, u32, u32, u32, u32, u32, i64) {
-    let off = time::UtcOffset::current_local_offset().map(|o| o.whole_seconds() as i64).unwrap_or(0);
+    let off = time::OffsetDateTime::from_unix_timestamp(unix)
+        .ok()
+        .and_then(|t| time::UtcOffset::local_offset_at(t).ok())
+        .map(|o| o.whole_seconds() as i64)
+        .unwrap_or(0);
     let mut t = utc(unix + off);
     t.6 = off;
     t

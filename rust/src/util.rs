@@ -169,3 +169,7 @@ pub fn de_go_time<'de, D: serde::Deserializer<'de>>(d: D) -> Result<(i64, i64), 
     let s: Option<String> = serde::Deserialize::deserialize(d)?;
     Ok(s.and_then(|s| parse_go_time(&s)).unwrap_or((0, 0)))
 }
+
+/// Runs on a socket before it is used: marks it (Linux SO_MARK) or keeps it
+/// outside the VPN (Android VpnService.protect).
+pub type SockHook = std::sync::Arc<dyn Fn(&socket2::Socket) -> std::io::Result<()> + Send + Sync>;

@@ -7,13 +7,12 @@ every node switches by its normal update and keeps running.
 
 ## The release switch
 
-Every release builds all files from Go, then rebuilds the ones listed in
-`RELEASE_IMPL` from Rust (same names). Because both builds read the same files
-and speak the same protocols (the mixed-mesh lab runs Go and Rust nodes
-together), the switch can go one platform at a time: list
-`meshgate-linux-amd64`, push, and every Linux x86 node updates to the Rust
-build by its normal update; the others stay Go. To go back, remove the line
-and push again (nodes update back to the Go build of the next release).
+Releases are the Rust build only (`make release` in `rust/`), under the
+file names the Go build used, and only when the `rust` workflow passed on
+that commit. Go nodes update to it by their normal update (`meshgate update`
+or "update all"); both builds read the same files and speak the same
+protocols, so a mesh can run Go and Rust nodes together while updating.
+A node keeps its Go binary next to the new one as `meshgate.old`.
 
 ## The contract: what the Rust build must keep exactly
 
@@ -64,14 +63,22 @@ output) and passing.
 | 5 | cmd: init/join wizard, status, token, leave, start/stop, ports, diag, update, webui, pfsense | `main`, `cli` | done |
 | 5 | tui | `tui` (crossterm, same views as bubbletea) | done |
 | 6 | FreeBSD/pfSense: pf anchors, `wg` tool, beep, rc script, GUI install | `fw::pf`, `wg::freebsd`, `pfsense` | ported, type-checked; needs a pfSense test |
-| 6 | Windows: Wintun + userspace WireGuard, service | `wg::windows` | not ported (Windows stays Go) |
+| 6 | Windows: Wintun + userspace WireGuard, service | `wg::user` + `wg::windows`, `winsvc`, `winnet` | ported; clippy-clean cross build; CI starts a real node (adapter, service, local API) on a Windows runner; needs a run on a real mesh |
 | 7 | End-to-end lab passes against the Rust binary (`test/e2e/lab.sh`) | | done |
 | 7 | Mixed mesh: Go and Rust nodes in one lab, both ways round (`make mixed-lab`) | | done |
 | 7 | In-place upgrade Go → Rust → Go on one node (`make upgrade-test`) | | done |
 | 7 | Benchmark recorded (`bench/bench.sh compare`) | | done |
+| 8 | Portable userspace WireGuard (boringtun noise + own UDP/TUN loops) for platforms without kernel WireGuard | `wgdev` | done (phones, Windows, macOS) |
+| 8 | macOS nodes (new; Go had none): utun + userspace WireGuard, launchd service, installer | `wg::macos`, `cli::service` | built and smoke-tested in CI only (macOS runner); no Mac to test on |
+| 8 | Phone engine (`go/mobile/core`) and phone simulator | `mobile`, `bin/phonesim` | done; the lab passes with the Rust phonesim |
+| 8 | Android app on the Rust engine (JNI, same Java API as gomobile) | `meshcore` (`android.rs`), `make android-core` | native libs built for all ABIs; APK built in CI, not yet run on a device |
+| 8 | iOS app on the Rust engine (C API + Swift wrapper with gomobile's names) | `meshcore` (`capi.rs`, `include/`), `make ios-core` | C API unit-tested on Linux; xcframework and app build only in CI (macOS) |
 
-The phone app's core (`go/mobile/core`, built with gomobile) stays in Go for
-now: it is a separate build and speaks the same protocols.
+The phone apps' core is now Rust (`rust/meshcore`, over `meshgate::mobile`):
+libmeshcore.so for Android (JNI classes in `dev.meshgate.meshcore`, same API
+the gomobile .aar had) and Meshcore.xcframework for iOS (C API wrapped by
+`go/mobile/ios/Shared/Meshcore.swift` with gomobile's Swift names). The app
+code itself is unchanged. The Go core in `go/mobile/core` is no longer built.
 
 ## Feature checklist
 
@@ -92,7 +99,7 @@ feature before the switch.
 - [x] `diag ping|trace|tcp|udp|http <target> [port]` and `myip`
 - [x] `update [--check]` (root check, wrong-copy warning, checksum, `.old` kept, exit 3)
 - [x] `start | stop | restart` (state kept across reboots; stop takes the tunnel down)
-- [ ] `service install | uninstall` (Windows) — not ported; Windows keeps the Go build
+- [ ] `service install | uninstall` (Windows; also macOS launchd in Rust) — ported (SCM service with recovery restarts 3 s / 10 s / 30 s, auto vs manual start for start/stop); CI installs and starts it on a Windows runner
 - [x] `ports`, `version`, `help`
 
 **Mesh core**
@@ -145,8 +152,9 @@ feature before the switch.
 
 **Platforms**
 - [x] Linux amd64 / arm64 / arm (systemd) — amd64 verified by the lab, the mixed meshes and the benchmark; arm64/arm are the same code, cross-built
-- [ ] FreeBSD / pfSense amd64 / arm64 (rc script, `wg` tool, if_wg out of the `wg` group, pfSense GUI pages, `/var/log/meshgate.log`) — amd64 ported and type-checked, needs a run on a real pfSense; arm64 cannot be cross-built yet (stays Go)
-- [ ] Windows amd64 / arm64 (Wintun, service, recovery restart) — not ported (needs WireGuardNT and a Windows machine to test); stays Go
+- [ ] FreeBSD / pfSense amd64 / arm64 (rc script, `wg` tool, if_wg out of the `wg` group, pfSense GUI pages, `/var/log/meshgate.log`) — ported; amd64 and arm64 (pinned nightly + build-std against a FreeBSD 14.4 sysroot, `rust/build-extra.sh`) each run the FreeBSD lab in a VM in CI; needs a run on a real pfSense
+- [ ] Windows amd64 / arm64 (Wintun, service, recovery restart) — amd64 ported (Wintun + userspace WireGuard like Go's wireguard-go; the local API is a named pipe for SYSTEM/Administrators instead of a socket file); CI smoke test on a Windows runner; not yet run in a real mesh. arm64 is cross-built with llvm-mingw (`rust/build-extra.sh`) and smoke-tested on a Windows on Arm runner.
+- [ ] macOS amd64 / arm64 (new platform) — utun, launchd (`meshgate service install`), `install.sh`; CI smoke test only
 
 ## Measuring
 

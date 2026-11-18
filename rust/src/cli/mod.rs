@@ -30,7 +30,7 @@ Usage:
   meshgate webui ca             the web UI's CA: install it once per device, no more warnings
   meshgate pfsense install|remove  VPN > meshgate page and Firewall > Rules > MESHGATE tab (pfSense)
   meshgate diag ping|trace|tcp|udp|http <target> [port]  test connectivity from this node
-  meshgate service install|uninstall  run at boot (Windows service; systemd/rc.d are set up by the installer)
+  meshgate service install|uninstall  run at boot (Windows service, macOS launchd; systemd/rc.d are set up by the installer)
   meshgate start|stop|restart   turn meshgate on or off; it stays that way after reboots
   meshgate leave                stop and remove meshgate config from this machine
   meshgate update [--check]     install the latest release (checksum-verified) and restart
@@ -193,6 +193,8 @@ fn cmd_start_stop(cfg_path: &str, cmd: &str) -> Result<(), String> {
 fn cmd_service(cfg_path: &str, args: &[String]) -> Result<(), String> {
     #[cfg(windows)]
     return crate::winsvc::cmd_service(cfg_path, args);
+    #[cfg(target_os = "macos")]
+    return service::cmd_service(cfg_path, args);
     #[cfg(target_os = "freebsd")]
     {
         let _ = (cfg_path, args);

@@ -30,7 +30,7 @@ const TYPE_RESP: u8 = 2;
 
 /// Tags sockets (Linux SO_MARK) so probes never travel inside the tunnel
 /// they are testing.
-pub type Control = fn(&socket2::Socket) -> std::io::Result<()>;
+pub type Control = crate::util::SockHook;
 
 struct Pending {
     endpoint: String,
@@ -94,7 +94,7 @@ impl Prober {
 
     fn bind(&self, port: u16) -> std::io::Result<UdpSocket> {
         let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, Some(socket2::Protocol::UDP))?;
-        if let Some(c) = self.control {
+        if let Some(c) = &self.control {
             c(&s)?;
         }
         s.set_nonblocking(true)?;

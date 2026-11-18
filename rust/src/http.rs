@@ -209,6 +209,28 @@ where
     Ok(ClientResp { status: parts.status, headers: parts.headers, body })
 }
 
+/// Connects with a timeout, running hook on the socket first.
+pub async fn dial_hooked(addr: &str, timeout: Duration, hook: Option<&crate::util::SockHook>) -> Result<tokio::net::TcpStream, String> {
+    let Some(hook) = hook else { return dial(addr, timeout).await };
+    let fut = async {
+        let mut last = format!("dial tcp {addr}: no address");
+        for sa in tokio::net::lookup_host(addr).await.map_err(|e| format!("dial tcp {addr}: {e}"))? {
+            let s =
+                if sa.is_ipv4() { tokio::net::TcpSocket::new_v4() } else { tokio::net::TcpSocket::new_v6() }.map_err(|e| e.to_string())?;
+            hook(&socket2::SockRef::from(&s)).map_err(|e| format!("dial tcp {addr}: {e}"))?;
+            match s.connect(sa).await {
+                Ok(c) => {
+                    let _ = c.set_nodelay(true);
+                    return Ok(c);
+                }
+                Err(e) => last = format!("dial tcp {addr}: {e}"),
+            }
+        }
+        Err(last)
+    };
+    tokio::time::timeout(timeout, fut).await.unwrap_or_else(|_| Err(format!("dial tcp {addr}: i/o timeout")))
+}
+
 /// Connects with a timeout.
 pub async fn dial(addr: &str, timeout: Duration) -> Result<tokio::net::TcpStream, String> {
     match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
@@ -249,8 +271,24 @@ pub async fn tls(
     body: Bytes,
     timeout: Duration,
 ) -> Result<ClientResp, String> {
+    tls_hooked(addr, server_name, cfg, method, path, headers, body, timeout, None).await
+}
+
+/// tls with a socket hook.
+#[allow(clippy::too_many_arguments)]
+pub async fn tls_hooked(
+    addr: &str,
+    server_name: &str,
+    cfg: Arc<rustls::ClientConfig>,
+    method: Method,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Bytes,
+    timeout: Duration,
+    hook: Option<&crate::util::SockHook>,
+) -> Result<ClientResp, String> {
     let fut = async {
-        let c = dial(addr, timeout).await?;
+        let c = dial_hooked(addr, timeout, hook).await?;
         let name = rustls_pki_types::ServerName::try_from(server_name.to_string()).map_err(|e| e.to_string())?;
         let s = tokio_rustls::TlsConnector::from(cfg).connect(name, c).await.map_err(|e| e.to_string())?;
         request_on(s, method, server_name, path, headers, body, 64 << 20).await

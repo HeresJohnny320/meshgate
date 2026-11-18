@@ -1,6 +1,6 @@
 //! The WireGuard interface (Go: internal/wg). Linux uses the kernel module
 //! over netlink; FreeBSD/pfSense the if_wg kernel module through `wg`/
-//! `ifconfig`; Windows the WireGuardNT driver.
+//! `ifconfig`; Windows and macOS userspace WireGuard (wgdev) on Wintun/utun.
 
 use std::net::IpAddr;
 
@@ -20,10 +20,20 @@ mod freebsd;
 #[cfg(target_os = "freebsd")]
 pub use freebsd::*;
 
+#[cfg(any(windows, target_os = "macos"))]
+mod user;
+#[cfg(any(windows, target_os = "macos"))]
+pub use user::*;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
-#[cfg(windows)]
-pub use windows::*;
+
+// Phones (Android, iOS) use the mobile engine instead.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", windows, target_os = "macos")))]
+mod other;
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", windows, target_os = "macos")))]
+pub use other::*;
 
 /// Leaves room for IPv6 outer headers and PPPoE/LTE links.
 pub const MTU: u32 = 1280;
@@ -54,6 +64,8 @@ pub fn local_addrs(skip: &str) -> Vec<IpAddr> {
     crate::ifaces::list()
         .into_iter()
         .filter(|i| i.name != skip && i.up && !i.loopback)
+        // macOS names the mesh's utun itself (utunN), and VPNs use utun too.
+        .filter(|i| !(cfg!(target_os = "macos") && i.name.starts_with("utun")))
         .flat_map(|i| i.addrs)
         .filter(|(a, _)| a.is_ipv4())
         .map(|(a, _)| a)

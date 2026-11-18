@@ -814,9 +814,9 @@ something? Please open an issue.
 ### Code layout
 
 The Go version is in `go/`; the Rust rewrite is in `rust/` (what it keeps
-compatible and what is verified, in [PARITY.md](PARITY.md)). Releases build
-every file from Go and rebuild the ones listed in `RELEASE_IMPL` from Rust, so
-the switch can go one platform at a time. Paths below are inside `go/`.
+compatible and what is verified, in [PARITY.md](PARITY.md)). Releases are the
+Rust build only. Paths below are inside `go/` (the Rust modules have the
+same names under `rust/src/`).
 
 - `internal/store`: replicated config (LWW registers, hybrid logical clock,
   local-scope overrides, atomic JSON file).
@@ -828,8 +828,8 @@ the switch can go one platform at a time. Paths below are inside `go/`.
 - `internal/join`: tokens, pinned-TLS join API, phone sync endpoint.
 - `internal/pfsense`: pfSense GUI integration.
 - `internal/agent`: runs it all; `internal/webui`, `internal/tui`: the UIs.
-- `mobile/core`: the same engine for phones (gomobile, wireguard-go);
-  `mobile/android`, `mobile/ios`: the apps.
+- `mobile/android`, `mobile/ios`: the apps. Their engine is Rust
+  (`rust/meshcore`); `mobile/core` is the former Go engine.
 
 ### Development
 
@@ -853,12 +853,14 @@ against Pebble (Let's Encrypt's test server) in a network namespace.
 FreeBSD 14+. It uses vnet jails, real `if_wg` and pf with pfSense's anchor
 layout.
 
-Mobile builds (in `go/`):
+Mobile engine builds (in `rust/`):
 
 ```sh
-go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init
-make android-core   # → mobile/android/app/libs/meshcore.aar (needs the Android NDK)
-make ios-core       # → mobile/ios/Meshcore.xcframework (needs macOS + Xcode)
+cargo install cargo-ndk
+rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+make android-core   # → go/mobile/android/app/src/main/jniLibs/*/libmeshcore.so (needs ANDROID_NDK_HOME)
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+make ios-core       # → go/mobile/ios/Meshcore.xcframework (needs macOS + Xcode)
 ```
 
 - **Android:** `cd go/mobile/android && ./gradlew assembleDebug` (or Android
