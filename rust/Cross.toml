@@ -1,4 +1,7 @@
 # The release version must reach the build inside cross's containers:
-# a binary without it reports "dev" and never self-updates.
+# a binary without it reports "dev" and never self-updates. MESHGATE_GO_DIR
+# (the shared go/ folder the binary embeds files from) is mounted at the same
+# path, since the container otherwise only sees rust/.
 [build.env]
 passthrough = ["MESHGATE_VERSION"]
+volumes = ["MESHGATE_GO_DIR"]

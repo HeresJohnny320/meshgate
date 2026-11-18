@@ -172,6 +172,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           cargo install cross --locked
+          export MESHGATE_GO_DIR="$(cd .. && pwd)/go"   # mounted into cross's container (Cross.toml)
           cross build --release --locked --target x86_64-unknown-freebsd
           cp target/x86_64-unknown-freebsd/release/meshgate ../meshgate-freebsd
       - uses: vmactions/freebsd-vm@v1

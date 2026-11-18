@@ -3,6 +3,8 @@ VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 DIST := ../dist
 WINTUN := 0.14.1
 export MESHGATE_VERSION := $(VERSION)
+# Shared files under go/ that the binary embeds (see build.rs, Cross.toml).
+export MESHGATE_GO_DIR := $(abspath ../go)
 
 # Release targets per asset name. Linux builds are static (musl), like Go's
 # CGO_ENABLED=0 binaries, so they run on any distribution.

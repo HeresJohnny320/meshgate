@@ -256,12 +256,24 @@ mod tests {
 
     #[tokio::test]
     async fn installs_and_refuses_tampered() {
+        // On Windows the release file is a zip with meshgate.exe and wintun.dll.
+        let body = if cfg!(windows) {
+            use std::io::Write;
+            let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            for (name, b) in [("meshgate.exe", "new binary"), ("wintun.dll", "driver")] {
+                z.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+                z.write_all(b.as_bytes()).unwrap();
+            }
+            z.finish().unwrap().into_inner()
+        } else {
+            b"new binary".to_vec()
+        };
         for tamper in [false, true] {
-            let url = fake_release("v0.9.1", HashMap::from([(asset(), b"new binary".to_vec())]), tamper).await;
+            let url = fake_release("v0.9.1", HashMap::from([(asset(), body.clone())]), tamper).await;
             TEST_BASE.with(|b| *b.borrow_mut() = Some(url));
             assert_eq!(latest().await.unwrap(), "v0.9.1");
             let dir = tempfile::tempdir().unwrap();
-            let exe = dir.path().join("meshgate");
+            let exe = dir.path().join(if cfg!(windows) { "meshgate.exe" } else { "meshgate" });
             std::fs::write(&exe, "old binary").unwrap();
             let r = install("v0.9.1", &exe).await;
             let now = std::fs::read_to_string(&exe).unwrap();

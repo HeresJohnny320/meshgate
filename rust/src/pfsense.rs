@@ -14,9 +14,9 @@ const ASSETS_DIR: &str = "/usr/local/www/meshgate";
 const HELPER_DIR: &str = "/usr/local/share/meshgate";
 const PHP: &str = "/usr/local/bin/php";
 
-const PAGE: &str = include_str!("../../go/internal/pfsense/files/vpn_meshgate.php");
-const PROXY: &str = include_str!("../../go/internal/pfsense/files/meshgate_api.php");
-const HELPER: &str = include_str!("../../go/internal/pfsense/files/meshgate_config.php");
+const PAGE: &str = include_str!(concat!(env!("MESHGATE_GO_DIR"), "/internal/pfsense/files/vpn_meshgate.php"));
+const PROXY: &str = include_str!(concat!(env!("MESHGATE_GO_DIR"), "/internal/pfsense/files/meshgate_api.php"));
+const HELPER: &str = include_str!(concat!(env!("MESHGATE_GO_DIR"), "/internal/pfsense/files/meshgate_config.php"));
 
 /// Installs the GUI pages, the dashboard assets and the config helper.
 pub fn write_files(socket: &str, version: &str) -> Result<(), String> {

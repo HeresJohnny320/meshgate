@@ -24,9 +24,9 @@ pub const TOKEN_TTL: i64 = 12 * 3600;
 
 /// The dashboard's files.
 pub const STATIC: [(&str, &str, &[u8]); 3] = [
-    ("index.html", "text/html; charset=utf-8", include_bytes!("../../go/internal/webui/static/index.html")),
-    ("app.js", "text/javascript; charset=utf-8", include_bytes!("../../go/internal/webui/static/app.js")),
-    ("app.css", "text/css; charset=utf-8", include_bytes!("../../go/internal/webui/static/app.css")),
+    ("index.html", "text/html; charset=utf-8", include_bytes!(concat!(env!("MESHGATE_GO_DIR"), "/internal/webui/static/index.html"))),
+    ("app.js", "text/javascript; charset=utf-8", include_bytes!(concat!(env!("MESHGATE_GO_DIR"), "/internal/webui/static/app.js"))),
+    ("app.css", "text/css; charset=utf-8", include_bytes!(concat!(env!("MESHGATE_GO_DIR"), "/internal/webui/static/app.css"))),
 ];
 
 /// Locks out an address after 5 wrong passwords in 10 minutes.

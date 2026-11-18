@@ -2,4 +2,4 @@
 //! with "+" (added), "-" (removed) or "~" (changed or fixed); "## " starts a
 //! version.
 
-pub const TEXT: &str = include_str!("../../go/internal/changelog/CHANGELOG.md");
+pub const TEXT: &str = include_str!(concat!(env!("MESHGATE_GO_DIR"), "/internal/changelog/CHANGELOG.md"));
