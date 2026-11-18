@@ -246,3 +246,24 @@ jobs:
           usesh: true
           prepare: pkg install -y wireguard-tools python3
           run: sh test/freebsd/lab.sh "$PWD/arm64/meshgate-freebsd"
+
+  # The release build itself (rust/ make release: cross and build-extra.sh
+  # for all seven server files), so a release only starts once it works.
+  release-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          rustup toolchain install stable --profile minimal
+          cargo install cross --locked
+          sudo apt-get update && sudo apt-get install -y clang lld llvm
+      - name: make release
+        working-directory: rust
+        run: make release VERSION=v0.0.0-ci
+      - name: every release file is there
+        run: |
+          for f in meshgate-linux-amd64 meshgate-linux-arm64 meshgate-linux-arm meshgate-freebsd-amd64 \
+                   meshgate-freebsd-arm64 meshgate-windows-amd64.zip meshgate-windows-arm64.zip; do
+            test -s "dist/$f" || { echo "missing dist/$f"; exit 1; }
+          done
+          file dist/meshgate-*

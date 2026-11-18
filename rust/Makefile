@@ -12,10 +12,15 @@ LINUX := amd64:x86_64-unknown-linux-musl arm64:aarch64-unknown-linux-musl arm:ar
 FREEBSD := amd64:x86_64-unknown-freebsd arm64:aarch64-unknown-freebsd
 WINDOWS := amd64:x86_64-pc-windows-gnu arm64:aarch64-pc-windows-gnullvm
 
-# Builds $$target: cross for most targets, build-extra.sh for the two cross
-# has no image for (pfSense arm64, Windows arm64).
-XBUILD = case $$target in aarch64-unknown-freebsd|aarch64-pc-windows-gnullvm) ./build-extra.sh $$target;; \
-	*) cross build --release --locked --target $$target;; esac
+# Builds $$target and sets $$out to the folder with the binary: cross for most
+# targets, build-extra.sh for the two cross has no image for (pfSense arm64,
+# Windows arm64). Each cross target gets its own target dir: the images have
+# different glibc versions, and build scripts compiled in one do not run in
+# the next.
+XBUILD = case $$target in \
+	aarch64-unknown-freebsd|aarch64-pc-windows-gnullvm) ./build-extra.sh $$target && out=target/$$target/release;; \
+	*) cross build --release --locked --target $$target --target-dir target/cross-$$target && \
+		out=target/cross-$$target/$$target/release;; esac
 
 .PHONY: build test lab release release-darwin android-core ios-core clean
 
@@ -44,14 +49,14 @@ release:
 		arch=$${p%%:*}; target=$${p#*:}; \
 		case $$target in *freebsd*) os=freebsd;; *) os=linux;; esac; \
 		{ $(XBUILD); } && \
-		cp target/$$target/release/meshgate $(DIST)/meshgate-$$os-$$arch || exit 1; \
+		cp $$out/meshgate $(DIST)/meshgate-$$os-$$arch || exit 1; \
 	done
 	test -f $(DIST)/wintun.zip || curl -fsSL -o $(DIST)/wintun.zip https://www.wintun.net/builds/wintun-$(WINTUN).zip
 	for p in $(WINDOWS); do \
 		arch=$${p%%:*}; target=$${p#*:}; \
 		{ $(XBUILD); } && \
 		mkdir -p $(DIST)/win-$$arch && \
-		cp target/$$target/release/meshgate.exe $(DIST)/win-$$arch/ && \
+		cp $$out/meshgate.exe $(DIST)/win-$$arch/ && \
 		unzip -q -j -o $(DIST)/wintun.zip wintun/bin/$$arch/wintun.dll -d $(DIST)/win-$$arch && \
 		(cd $(DIST)/win-$$arch && zip -q -9 -FS ../meshgate-windows-$$arch.zip meshgate.exe wintun.dll) || exit 1; \
 	done
