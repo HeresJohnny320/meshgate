@@ -227,11 +227,14 @@ jobs:
         run: test/windows/smoke.ps1 "$PWD/arm64" arm64
 
   # The FreeBSD/pfSense lab on arm64 (Netgate 1100/2100), in an emulated
-  # arm64 FreeBSD VM.
+  # arm64 FreeBSD VM. It does not gate releases: the VM's package mirror is
+  # often unreachable or mid-sync. The same code is gated by the amd64 lab
+  # (freebsd) and the arm64 build.
   freebsd-arm64:
     needs: arm64
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -244,7 +247,9 @@ jobs:
           release: "14.3"
           arch: aarch64
           usesh: true
-          prepare: pkg install -y wireguard-tools python3
+          prepare: |
+            for i in 1 2 3; do pkg -4 install -y wireguard-tools python3 && break; sleep 60; done
+            pkg info -e wireguard-tools && pkg info -e python3
           run: sh test/freebsd/lab.sh "$PWD/arm64/meshgate-freebsd"
 
   # The release build itself (rust/ make release: cross and build-extra.sh
