@@ -12,13 +12,12 @@ LINUX := amd64:x86_64-unknown-linux-musl arm64:aarch64-unknown-linux-musl arm:ar
 FREEBSD := amd64:x86_64-unknown-freebsd arm64:aarch64-unknown-freebsd
 WINDOWS := amd64:x86_64-pc-windows-gnu arm64:aarch64-pc-windows-gnullvm
 
-# Builds $$target and sets $$out to the folder with the binary: cross for most
-# targets, build-extra.sh for the two cross has no image for (pfSense arm64,
-# Windows arm64). Each cross target gets its own target dir: the images have
+# Builds $$target and sets $$out to the folder with the binary: cross for
+# Linux and FreeBSD amd64, build-extra.sh for pfSense arm64 and Windows. Each cross target gets its own target dir: the images have
 # different glibc versions, and build scripts compiled in one do not run in
 # the next.
 XBUILD = case $$target in \
-	aarch64-unknown-freebsd|aarch64-pc-windows-gnullvm) ./build-extra.sh $$target && out=target/$$target/release;; \
+	aarch64-unknown-freebsd|*-pc-windows-*) ./build-extra.sh $$target && out=target/$$target/release;; \
 	*) cross build --release --locked --target $$target --target-dir target/cross-$$target && \
 		out=target/cross-$$target/$$target/release;; esac
 
@@ -42,7 +41,7 @@ lab: build
 
 # Every Linux, FreeBSD/pfSense and Windows release file (the same names the
 # Go build used, so nodes update to them). Needs `cross` (cargo install cross)
-# and Docker or Podman, plus clang, lld and llvm-ar for build-extra.sh.
+# and Docker or Podman, plus clang, lld, llvm-ar and MinGW for build-extra.sh.
 release:
 	mkdir -p $(DIST)
 	for p in $(LINUX) $(FREEBSD); do \

@@ -1,10 +1,13 @@
 #!/bin/sh
-# Builds the release targets that `cross` has no image for, on Linux x86_64:
+# Builds the release targets that do not go through `cross`, on Linux x86_64:
 #   aarch64-unknown-freebsd     pfSense arm64 (Netgate 1100/2100). A tier 3
 #                               Rust target: pinned nightly + build-std,
 #                               clang/lld against a FreeBSD base.txz sysroot.
 #   aarch64-pc-windows-gnullvm  Windows arm64, linked with llvm-mingw.
-# Needs curl, tar, xz, sha256sum, clang, lld and llvm-ar (apt: clang lld llvm).
+#   x86_64-pc-windows-gnu       Windows amd64, with the distribution's MinGW
+#                               (cross's Windows image exits without a word).
+# Needs curl, tar, xz, sha256sum, clang, lld and llvm-ar (apt: clang lld llvm)
+# and x86_64-w64-mingw32-gcc (apt: gcc-mingw-w64-x86-64).
 # Downloads are pinned and checked against SHA-256. The binary lands where
 # cargo puts it: target/<target>/release/.
 set -eu
@@ -66,6 +69,14 @@ aarch64-pc-windows-gnullvm)
 	CARGO_TARGET_AARCH64_PC_WINDOWS_GNULLVM_LINKER=aarch64-w64-mingw32-clang \
 	CC_aarch64_pc_windows_gnullvm=aarch64-w64-mingw32-clang \
 	AR_aarch64_pc_windows_gnullvm=llvm-ar \
+		cargo build --release --locked --target "$target"
+	;;
+x86_64-pc-windows-gnu)
+	command -v x86_64-w64-mingw32-gcc >/dev/null || { echo "needs x86_64-w64-mingw32-gcc (apt: gcc-mingw-w64-x86-64)" >&2; exit 1; }
+	rustup target add "$target"
+	CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+	CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc \
+	AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
 		cargo build --release --locked --target "$target"
 	;;
 *)
